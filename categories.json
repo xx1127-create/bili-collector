@@ -1,0 +1,190 @@
+[
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "children": [],
+            "id": "46a40d6c",
+            "keywords": [
+              "大模型",
+              "LLM",
+              "ChatGPT",
+              "Claude",
+              "DeepSeek"
+            ],
+            "name": "大模型"
+          },
+          {
+            "children": [],
+            "id": "edc7168e",
+            "keywords": [
+              "AI绘画",
+              "Stable Diffusion",
+              "Midjourney"
+            ],
+            "name": "AI绘画"
+          },
+          {
+            "children": [],
+            "id": "1033ac1e",
+            "keywords": [
+              "AI视频生成",
+              "Sora"
+            ],
+            "name": "AI视频"
+          },
+          {
+            "children": [],
+            "id": "169fc088",
+            "keywords": [
+              "AI编程",
+              "Cursor"
+            ],
+            "name": "AI编程"
+          }
+        ],
+        "id": "75a457a3",
+        "keywords": [
+          "人工智能",
+          "AI"
+        ],
+        "name": "人工智能"
+      },
+      {
+        "children": [
+          {
+            "children": [],
+            "id": "c3377822",
+            "keywords": [
+              "手机评测",
+              "手机测评"
+            ],
+            "name": "手机"
+          },
+          {
+            "children": [
+              {
+                "children": [],
+                "id": "92af26d4",
+                "keywords": [
+                  "显卡评测"
+                ],
+                "name": "显卡"
+              },
+              {
+                "children": [],
+                "id": "6715e865",
+                "keywords": [
+                  "CPU评测"
+                ],
+                "name": "CPU"
+              }
+            ],
+            "id": "935b4fbf",
+            "keywords": [
+              "笔记本评测",
+              "电脑装机"
+            ],
+            "name": "电脑"
+          },
+          {
+            "children": [],
+            "id": "fb17b154",
+            "keywords": [
+              "耳机评测"
+            ],
+            "name": "耳机音频"
+          },
+          {
+            "children": [],
+            "id": "f992909c",
+            "keywords": [
+              "平板评测"
+            ],
+            "name": "平板"
+          }
+        ],
+        "id": "242851fc",
+        "keywords": [
+          "数码"
+        ],
+        "name": "数码"
+      },
+      {
+        "children": [
+          {
+            "children": [],
+            "id": "908a646b",
+            "keywords": [
+              "Python教程"
+            ],
+            "name": "Python"
+          },
+          {
+            "children": [],
+            "id": "ac90d70b",
+            "keywords": [
+              "前端开发"
+            ],
+            "name": "前端"
+          }
+        ],
+        "id": "3909360b",
+        "keywords": [
+          "编程"
+        ],
+        "name": "编程开发"
+      },
+      {
+        "children": [],
+        "id": "5567d8e6",
+        "keywords": [
+          "芯片",
+          "半导体"
+        ],
+        "name": "半导体芯片"
+      },
+      {
+        "children": [],
+        "id": "87d476f9",
+        "keywords": [
+          "航天",
+          "火箭发射"
+        ],
+        "name": "航天"
+      },
+      {
+        "children": [],
+        "id": "04423f67",
+        "keywords": [
+          "新能源汽车",
+          "电动车评测"
+        ],
+        "name": "新能源汽车"
+      },
+      {
+        "children": [],
+        "id": "7bd25dff",
+        "keywords": [
+          "机器人",
+          "人形机器人"
+        ],
+        "name": "机器人"
+      }
+    ],
+    "id": "80df3184",
+    "keywords": [
+      "科技"
+    ],
+    "name": "科技"
+  },
+  {
+    "id": "4ddfc001",
+    "name": "考古",
+    "keywords": [
+      "考古"
+    ],
+    "children": []
+  }
+]

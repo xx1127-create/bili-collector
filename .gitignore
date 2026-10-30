@@ -1,0 +1,7 @@
+# 本地数据：登录 Cookie、数据库、导出结果，不上传
+data/
+output/
+
+__pycache__/
+*.pyc
+.DS_Store
