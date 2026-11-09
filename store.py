@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS hits (
     bvid TEXT, category TEXT, keyword TEXT, found_at TEXT,
     PRIMARY KEY (bvid, category, keyword)
 );
+CREATE INDEX IF NOT EXISTS idx_hits_cat ON hits(category);
 CREATE TABLE IF NOT EXISTS channels (
     mid INTEGER PRIMARY KEY, name TEXT, url TEXT, fans INTEGER,
     total_videos INTEGER, fetched_videos INTEGER, status TEXT, crawled_at TEXT

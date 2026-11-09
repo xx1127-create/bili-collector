@@ -12,6 +12,10 @@
   header { background:var(--card); border-bottom:1px solid var(--line); padding:12px 20px; display:flex; align-items:center; gap:12px; }
   header h1 { font-size:18px; margin:0; color:var(--pink); }
   header .stats { margin-left:auto; color:var(--muted); font-size:13px; }
+  nav { display:flex; gap:4px; margin-left:8px; }
+  nav a { padding:4px 12px; border-radius:6px; color:var(--muted); text-decoration:none; }
+  nav a:hover { color:var(--blue); }
+  nav a.on { background:#fff0f4; color:var(--pink); font-weight:500; }
   main { display:grid; grid-template-columns: minmax(360px, 1fr) minmax(420px, 1.2fr); gap:16px; padding:16px 20px; }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
   .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
@@ -75,6 +79,7 @@
 <body>
 <header>
   <h1>B站视频采集器</h1>
+  <nav><a href="/" class="on">采集</a><a href="/results">查看结果</a></nav>
   <span id="phase" style="color:var(--muted)"></span>
   <span class="stats" id="stats"></span>
 </header>

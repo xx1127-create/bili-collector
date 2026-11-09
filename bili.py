@@ -157,8 +157,13 @@ class BiliClient:
                 else:
                     j = r.json()
                     code, msg = j.get("code"), j.get("message")
-                    if code == 0:
-                        return j.get("data") or {}
+                    data = j.get("data") or {}
+                    if code == 0 and isinstance(data, dict) and data.get("v_voucher") \
+                            and not data.get("result") and not data.get("list"):
+                        # 被风控时 B站仍返回 code 0，但只给一个验证凭证、没有数据
+                        code, msg = -352, "风控验证（返回了空结果）"
+                    elif code == 0:
+                        return data
             except Exception as e:
                 code, msg = None, str(e)
             if code is not None and code not in RISK_CODES:
@@ -167,8 +172,9 @@ class BiliClient:
                 # 被 B 站限流：老老实实暂停一段时间再试，之后的请求也整体放慢
                 pause = self.cooldown * (attempt + 1)
                 self.interval = min(self.interval * 1.5, 10)
-                self.log(f"  B站提示请求太频繁（{code}），暂停 {pause // 60} 分钟后继续，"
-                         f"请求间隔调为 {self.interval:.1f} 秒…")
+                tip = "" if self.cookie else "（建议先扫码登录）"
+                self.log(f"  B站限流了（{code} {msg}），暂停 {pause // 60} 分钟后继续，"
+                         f"请求间隔调为 {self.interval:.1f} 秒{tip}…")
             else:
                 pause = 10 * (attempt + 1)
                 self.log(f"  网络错误（{msg}），{pause} 秒后重试…")

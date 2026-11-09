@@ -11,6 +11,7 @@ from flask import Flask, jsonify, request, send_file
 from bili import BiliClient, QRLogin
 from categories import Categories
 from crawler import Job
+import results
 from export import export_all
 from store import Store
 
@@ -44,6 +45,37 @@ app = Flask(__name__)
 @app.get("/")
 def index():
     return send_file(os.path.join(BASE, "index.html"))
+
+
+@app.get("/results")
+def results_page():
+    return send_file(os.path.join(BASE, "results.html"))
+
+
+def _page_args():
+    a = request.args
+    return dict(q=a.get("q", "").strip(), sort=a.get("sort", ""),
+                page=max(1, int(a.get("page", 1))), size=min(200, max(10, int(a.get("size", 50)))))
+
+
+@app.get("/api/results/videos")
+def results_videos():
+    return jsonify(results.videos(store, request.args.get("category", ""), **_page_args()))
+
+
+@app.get("/api/results/channels")
+def results_channels():
+    return jsonify(results.channels(store, request.args.get("category", ""), **_page_args()))
+
+
+@app.get("/api/results/channel/<int:mid>")
+def results_channel(mid):
+    return jsonify(results.channel_videos(store, mid, **_page_args()))
+
+
+@app.get("/api/results/categories")
+def results_categories():
+    return jsonify(results.category_counts(store))
 
 
 @app.get("/api/categories")
@@ -153,7 +185,7 @@ def clear():
 
 
 if __name__ == "__main__":
-    port = 8765
+    port = int(sys.argv[sys.argv.index("--port") + 1]) if "--port" in sys.argv else 8765
     if "--no-browser" not in sys.argv:
         threading.Timer(1.0, lambda: webbrowser.open(f"http://127.0.0.1:{port}")).start()
     app.run(host="127.0.0.1", port=port, debug=False, threaded=True)
