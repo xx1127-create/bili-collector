@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>筛选 · B站视频采集器</title>
+<style>
+  :root { --pink:#fb7299; --blue:#00a1d6; --bg:#f6f7f8; --card:#fff; --line:#e3e5e7; --text:#18191c; --muted:#61666d;
+          --ok:#0b9b5e; --bad:#e04848; --wait:#e07b00; --violet:#7a5af8; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background:var(--bg); color:var(--text); }
+  a { color:inherit; text-decoration:none; }
+  a:hover { color:var(--blue); }
+  header { background:var(--card); border-bottom:1px solid var(--line); padding:12px 20px; display:flex; align-items:center; gap:20px; position:sticky; top:0; z-index:5; }
+  header h1 { font-size:18px; margin:0; color:var(--pink); }
+  nav { display:flex; gap:4px; }
+  nav a { padding:4px 12px; border-radius:6px; color:var(--muted); }
+  nav a.on { background:#fff0f4; color:var(--pink); font-weight:500; }
+  main { padding:16px 20px; display:flex; flex-direction:column; gap:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+  .card > summary { font-size:15px; font-weight:600; cursor:pointer; }
+  h3 { font-size:14px; margin:18px 0 8px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .hint { font-weight:normal; color:var(--muted); font-size:12px; }
+  button, select, input, textarea { font:inherit; font-size:13px; border:1px solid var(--line); background:#fff; border-radius:6px; padding:5px 10px; }
+  input[type=checkbox] { width:16px; height:16px; padding:0; accent-color:var(--pink); cursor:pointer; }
+  button { cursor:pointer; white-space:nowrap; }
+  button:hover { border-color:var(--blue); color:var(--blue); }
+  button.primary { background:var(--pink); border-color:var(--pink); color:#fff; }
+  button.primary:hover { opacity:.9; color:#fff; }
+  button.mini { padding:1px 7px; font-size:12px; }
+  button.ok:hover { border-color:var(--ok); color:var(--ok); }
+  button.bad:hover { border-color:var(--bad); color:var(--bad); }
+
+  /* 规则 */
+  .rule { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:6px 8px; border-radius:6px; }
+  .rule:hover { background:#fafbfc; }
+  .rule.off { opacity:.45; }
+  .rule .no { width:20px; height:20px; border-radius:50%; background:var(--pink); color:#fff; font-size:12px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .rule input[type=number] { width:80px; }
+  .rule input.wide { width:120px; }
+  .rule input.label { width:170px; font-weight:500; }
+  .rule input.words { flex:1; min-width:200px; }
+  .rule .act { color:var(--bad); font-weight:500; white-space:nowrap; }
+  .rule .act.wait { color:var(--wait); }
+  .custom { border:1px dashed var(--line); border-radius:8px; padding:4px; display:flex; flex-direction:column; gap:2px; }
+  .examples { color:var(--muted); font-size:12px; margin:6px 0 0 4px; }
+  .examples code { background:#f4f4f5; padding:0 4px; border-radius:3px; }
+  details.words-box { margin-top:10px; }
+  details.words-box summary { cursor:pointer; color:var(--muted); font-size:13px; }
+  .wordlists { display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:12px; margin-top:10px; }
+  .wordlists label { display:block; font-weight:500; margin-bottom:4px; }
+  .wordlists textarea { width:100%; height:96px; resize:vertical; font-size:12px; line-height:1.6; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:14px; }
+  .msg { color:var(--muted); font-size:13px; }
+
+  /* 结果 */
+  .bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  .tabs { display:inline-flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+  .tabs button { border:none; border-radius:0; border-right:1px solid var(--line); }
+  .tabs button:last-child { border-right:none; }
+  .tabs button.on { background:var(--pink); color:#fff; }
+  .bar .spacer { flex:1; }
+  .scroll { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; font-weight:500; color:var(--muted); font-size:12px; padding:6px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  td { padding:7px 8px; border-bottom:1px solid #f1f2f3; vertical-align:middle; }
+  tr:hover td { background:#fafbfc; }
+  td.num, th.num { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .over { color:var(--bad); font-weight:600; }
+  .badge { font-size:12px; padding:1px 8px; border-radius:10px; white-space:nowrap; font-weight:500; }
+  .b-通过 { background:#e8f7ef; color:var(--ok); }
+  .b-淘汰 { background:#fdecec; color:var(--bad); }
+  .b-待定 { background:#fff4e5; color:var(--wait); }
+  .manual { font-size:11px; color:var(--violet); background:#f1edff; padding:0 5px; border-radius:3px; margin-left:4px; white-space:nowrap; }
+  .up { color:var(--blue); cursor:pointer; font-weight:500; }
+  .up:hover { text-decoration:underline; }
+  .ext { font-size:12px; color:var(--muted); margin-left:4px; }
+  .reason { color:var(--muted); font-size:12px; min-width:140px; max-width:280px; }
+  .stats { font-size:12px; color:var(--muted); white-space:nowrap; line-height:1.6; }
+  .cat { font-size:12px; color:var(--muted); white-space:nowrap; }
+  input.name { width:150px; padding:3px 6px; font-weight:500; }
+  .crawl { font-size:12px; white-space:nowrap; }
+  .crawl.done { color:var(--muted); }
+  .crawl.next { color:var(--wait); }
+  .exp { font-size:12px; white-space:nowrap; }
+  .exp.new { color:var(--ok); font-weight:500; }
+  .exp.done { color:var(--muted); }
+  .exp button { font-size:11px; padding:1px 6px; margin-left:4px; }
+  label.inc { font-size:13px; color:var(--muted); white-space:nowrap; }
+  .ops { display:flex; gap:4px; }
+  .placeholder { text-align:center; color:var(--muted); padding:40px 0; }
+
+  /* 抽屉 */
+  .mask { position:fixed; inset:0; background:rgba(0,0,0,.25); z-index:10; display:none; }
+  .drawer { position:fixed; top:0; right:0; bottom:0; width:min(800px, 100vw); background:var(--bg); z-index:11; display:none; flex-direction:column; box-shadow:-8px 0 30px rgba(0,0,0,.15); }
+  .drawer.open, .mask.open { display:flex; }
+  .drawer .head { background:var(--card); padding:14px 18px; border-bottom:1px solid var(--line); display:flex; flex-direction:column; gap:8px; }
+  .drawer h3 { margin:0; font-size:17px; }
+  .drawer .meta { color:var(--muted); font-size:13px; display:flex; gap:14px; flex-wrap:wrap; }
+  .drawer .body { flex:1; overflow:auto; padding:14px 18px; }
+  .drawer textarea { width:100%; height:44px; resize:vertical; }
+  .flag { font-size:11px; padding:0 6px; border-radius:3px; white-space:nowrap; margin-left:4px; }
+  .f-un { background:#f1f2f3; color:var(--muted); }
+  .f-dom { background:#fdecec; color:var(--bad); }
+  .f-jb { background:#fff4e5; color:var(--wait); }
+  .f-rel { background:#e8f7ef; color:var(--ok); }
+  .f-cu { background:#f1edff; color:var(--violet); }
+</style>
+</head>
+<body>
+<header>
+  <h1>B站视频采集器</h1>
+  <nav><a href="/">采集</a><a href="/results">查看结果</a><a href="/filter" class="on">筛选</a></nav>
+</header>
+<main>
+  <details class="card" id="rulesCard">
+    <summary>筛选规则 <span class="hint">点开修改；勾选框控制每条规则是否启用；改完点「保存规则并重新筛选」</span></summary>
+
+    <h3>内置规则</h3>
+    <div id="builtin"></div>
+    <details class="words-box">
+      <summary>词表（规则 ①②③ 用）</summary>
+      <div class="wordlists" id="wordlists"></div>
+    </details>
+
+    <h3>自定义规则 <span class="hint">满足条件的频道 → 筛掉</span>
+      <button class="mini" onclick="addRule('title_ratio')">＋ 标题占比规则</button>
+      <button class="mini" onclick="addRule('name_contains')">＋ 频道名规则</button>
+      <button class="mini" onclick="addRule('number')">＋ 数值规则</button>
+    </h3>
+    <div class="custom" id="custom"></div>
+    <div class="examples">
+      例子：<code>科技频道里，标题含「游戏 原神 王者荣耀」的视频超过 30%</code>
+      <code>频道名含「官方 旗舰店 客服」</code>　<code>停更天数大于 365</code>　<code>视频总数小于 20</code>
+      <code>考古频道里，标题含「考古 文物 遗址」的视频低于 40%</code>
+    </div>
+
+    <div class="row">
+      <button class="primary" onclick="saveAndRun()">保存规则并重新筛选</button>
+      <span class="msg" id="rulesMsg">词之间用空格或逗号隔开，英文不分大小写。</span>
+    </div>
+  </details>
+
+  <section class="card">
+    <div class="bar">
+      <span class="tabs" id="tabs"></span>
+      <input type="search" id="q" placeholder="搜索 原频道名 / 新名字" style="width:190px">
+      <span class="spacer"></span>
+      <button onclick="runOnly()">重新筛选</button>
+      <label class="inc" title="不勾：只导出还没导出过的入选频道"><input type="checkbox" id="incExported"> 也导出以前导出过的</label>
+      <button class="primary" id="exportBtn" onclick="exportFiles()">导出入选频道</button>
+    </div>
+    <div class="msg" id="crawlMsg" style="margin-bottom:6px"></div>
+    <div class="msg" id="exportMsg" style="margin-bottom:8px"></div>
+    <div class="scroll" id="table"></div>
+  </section>
+</main>
+
+<div class="mask" id="mask" onclick="closeDrawer()"></div>
+<aside class="drawer" id="drawer">
+  <div class="head">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <h3 id="dName"></h3><span id="dNewName" class="msg"></span>
+      <a id="dLink" target="_blank" style="font-size:13px;color:var(--blue)">打开B站主页 ↗</a>
+      <button style="margin-left:auto" onclick="closeDrawer()">关闭</button>
+    </div>
+    <div class="meta" id="dMeta"></div>
+    <div class="row" style="margin-top:0">
+      <span id="dDecision"></span>
+      <button class="mini ok" onclick="decide(cur, '通过')">改为入选</button>
+      <button class="mini bad" onclick="decide(cur, '淘汰')">改为筛掉</button>
+      <button class="mini" onclick="decide(cur, '待定')">改为待定</button>
+      <button class="mini" onclick="decide(cur, null, true)">恢复自动判断</button>
+    </div>
+    <textarea id="dNote" placeholder="备注（例如为什么手动改判），失焦自动保存"></textarea>
+  </div>
+  <div class="body">
+    <div class="bar"><span class="tabs" id="dTabs"></span><span class="spacer"></span><span class="msg" id="dCount"></span></div>
+    <div id="dTable"></div>
+  </div>
+</aside>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt = n => n == null ? '—' : n >= 1e8 ? (n/1e8).toFixed(1) + '亿' : n >= 1e4 ? (n/1e4).toFixed(1) + '万' : String(n);
+const last = p => (p || '').split(' > ').pop();
+const LABEL = {'通过': '入选', '淘汰': '筛掉', '待定': '待定'};
+const FIELDS = {fans: '粉丝数', total_videos: '视频总数', days_since_update: '停更天数', avg_play: '平均播放量'};
+async function api(method, url, body) {
+  const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined});
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+let rules = null, tops = [], view = '通过', manualOnly = false, cur = null, detail = null, dView = 'all';
+
+// ---------- 规则 ----------
+const scopeSel = (val, cls = 'scope') => `<select class="${cls}"><option value="">全部类别</option>${tops.map(t => `<option ${t === val ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
+const onBox = k => `<input type="checkbox" data-on="${k}" ${rules[k] ? 'checked' : ''}>`;
+
+function renderBuiltin() {
+  const topSel = (k) => `<select id="${k}">${tops.map(t => `<option ${t === rules[k] ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
+  $('builtin').innerHTML = `
+    <div class="rule">${onBox('unrelated_on')}<span class="no">1</span>跟所属类别无关的视频超过 <input type="number" id="unrelated_max" step="0.1" value="${rules.unrelated_max}"> % <span class="act">→ 筛掉</span></div>
+    <div class="rule">${onBox('domestic_on')}<span class="no">2</span>${topSel('domestic_scope')} 类频道，国产品牌视频超过 <input type="number" id="domestic_max" step="0.1" value="${rules.domestic_max}"> % <span class="act">→ 筛掉</span></div>
+    <div class="rule">${onBox('jianbao_on')}<span class="no">3</span>${topSel('jianbao_scope')} 类频道，鉴宝视频超过 <input type="number" id="jianbao_max" step="0.1" value="${rules.jianbao_max}"> % <span class="act">→ 筛掉</span></div>
+    <div class="rule">${onBox('fans_on')}<span class="no">4</span>粉丝数超过 <input type="number" id="fans_max" class="wide" step="10000" value="${rules.fans_max}"> <span class="hint" id="fansHint"></span> <span class="act">→ 筛掉</span></div>
+    <div class="rule">${onBox('min_videos_on')}<span class="no">5</span>已抓到的视频少于 <input type="number" id="min_videos" value="${rules.min_videos}"> 个 <span class="act wait">→ 待定</span><span class="hint">（频道视频太少，先不判断；停用后视频再少也照样判断）</span></div>
+    <div class="rule"><span class="no">·</span><span class="hint">固定规则：只有展开并抓全的频道才参加筛选；没抓全的频道不入选也不筛掉，下次采集会继续展开。</span></div>`;
+  $('builtin').querySelectorAll('[data-on]').forEach(b => { b.onchange = () => b.closest('.rule').classList.toggle('off', !b.checked); b.onchange(); });
+  $('fans_max').oninput = () => $('fansHint').textContent = '（' + fmt(+$('fans_max').value) + '）';
+  $('fans_max').oninput();
+}
+
+function ruleRow(c) {
+  const opSel = (ops) => `<select class="op">${ops.map(([v, t]) => `<option value="${v}" ${c.op === v ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
+  let body;
+  if (c.type === 'title_ratio') body = `${scopeSel(c.scope)} 类频道，标题含 <input class="words" value="${esc(c.words)}" placeholder="词，用空格隔开"> 的视频 ${opSel([['>', '超过'], ['<', '低于']])} <input type="number" class="value" step="0.1" value="${c.value}"> %`;
+  else if (c.type === 'name_contains') body = `${scopeSel(c.scope)} 类频道，频道名含 <input class="words" value="${esc(c.words)}" placeholder="词，用空格隔开">`;
+  else body = `${scopeSel(c.scope)} 类频道，<select class="field">${Object.entries(FIELDS).map(([k, t]) => `<option value="${k}" ${c.field === k ? 'selected' : ''}>${t}</option>`).join('')}</select> ${opSel([['>', '大于'], ['<', '小于']])} <input type="number" class="value wide" value="${c.value}">`;
+  return `<div class="rule ${c.enabled ? '' : 'off'}" data-id="${esc(c.id || '')}" data-type="${c.type}">
+    <input type="checkbox" class="enabled" ${c.enabled ? 'checked' : ''}>
+    <input class="label" value="${esc(c.label)}" placeholder="规则名称（会写进筛掉原因）">
+    ${body} <span class="act">→ 筛掉</span>
+    <button class="mini bad" onclick="this.closest('.rule').remove(); emptyHint()">删除</button></div>`;
+}
+function renderCustom() {
+  $('custom').innerHTML = rules.custom_rules.map(ruleRow).join('');
+  $('custom').querySelectorAll('.enabled').forEach(b => b.onchange = () => b.closest('.rule').classList.toggle('off', !b.checked));
+  emptyHint();
+}
+function emptyHint() {
+  if (!$('custom').querySelector('.rule')) $('custom').innerHTML = '<div class="msg" style="padding:8px">还没有自定义规则，点上面的按钮添加。</div>';
+}
+function addRule(type) {
+  const defaults = {title_ratio: {label: '', words: '', op: '>', value: 30},
+                    name_contains: {label: '', words: ''}, number: {label: '', field: 'days_since_update', op: '>', value: 365}};
+  const c = {type, enabled: true, scope: '', ...defaults[type]};
+  if (!$('custom').querySelector('.rule')) $('custom').innerHTML = '';
+  $('custom').insertAdjacentHTML('beforeend', ruleRow(c));
+  const row = $('custom').lastElementChild;
+  row.querySelector('.enabled').onchange = e => row.classList.toggle('off', !e.target.checked);
+  row.querySelector('.label').focus();
+}
+function readCustom() {
+  return [...$('custom').querySelectorAll('.rule')].map(row => {
+    const g = s => row.querySelector(s);
+    return {id: row.dataset.id || undefined, type: row.dataset.type, enabled: g('.enabled').checked,
+      label: g('.label').value.trim(), scope: g('.scope').value, words: g('.words')?.value || '',
+      op: g('.op')?.value || '>', value: +(g('.value')?.value || 0), field: g('.field')?.value || 'fans'};
+  });
+}
+
+async function loadRules() {
+  rules = await api('GET', '/api/filter/rules');
+  tops = Object.keys(rules.related_words);
+  renderBuiltin();
+  $('wordlists').innerHTML =
+    tops.map(t => `<div><label>「${esc(t)}」相关词 <span class="hint">规则①：标题含任一词 = 相关；类别树里的类别名和关键词也自动算相关</span></label>
+      <textarea data-top="${esc(t)}">${esc(rules.related_words[t])}</textarea></div>`).join('') +
+    `<div><label>国产品牌词 <span class="hint">规则②</span></label><textarea id="domestic_words">${esc(rules.domestic_words)}</textarea></div>
+     <div><label>鉴宝词 <span class="hint">规则③</span></label><textarea id="jianbao_words">${esc(rules.jianbao_words)}</textarea></div>`;
+  renderCustom();
+}
+
+async function saveAndRun() {
+  const r = {related_words: {}, custom_rules: readCustom()};
+  for (const k of ['unrelated_max', 'domestic_max', 'jianbao_max', 'fans_max', 'min_videos']) r[k] = +$(k).value;
+  $('builtin').querySelectorAll('[data-on]').forEach(b => r[b.dataset.on] = b.checked);
+  r.domestic_scope = $('domestic_scope').value; r.jianbao_scope = $('jianbao_scope').value;
+  r.domestic_words = $('domestic_words').value; r.jianbao_words = $('jianbao_words').value;
+  document.querySelectorAll('#wordlists textarea[data-top]').forEach(t => r.related_words[t.dataset.top] = t.value);
+  try {
+    await api('PUT', '/api/filter/rules', r);
+    await loadRules(); await runOnly();
+    $('rulesMsg').textContent = '已保存并重新筛选 ✓（手动改判过的频道不受影响）';
+  } catch (e) { alert(e.message); }
+}
+async function runOnly() { $('exportMsg').textContent = '正在筛选…'; await api('POST', '/api/filter/run'); $('exportMsg').textContent = ''; load(); }
+
+// ---------- 列表 ----------
+function statLine(c) {
+  if (rules.min_videos_on && c.n_videos < rules.min_videos) return '<span class="hint">样本太少</span>';
+  const parts = [];
+  const p = (label, v, k, on) => { if (v != null) parts.push(`<span class="${on && v > rules[k] ? 'over' : ''}">${label} ${v}%</span>`); };
+  p('无关', c.unrelated_ratio, 'unrelated_max', rules.unrelated_on);
+  p('国产', c.domestic_ratio, 'domestic_max', rules.domestic_on);
+  p('鉴宝', c.jianbao_ratio, 'jianbao_max', rules.jianbao_on);
+  for (const [k, v] of Object.entries(c.custom_stats || {})) parts.push(`<span style="color:var(--violet)">${esc(k)} ${esc(v)}</span>`);
+  return parts.join('<br>');
+}
+function expCell(c) {
+  if (c.exported_at)
+    return `<span class="exp done" title="导出到 ${esc(c.exported_file || '')}">已导出 ${esc(c.exported_at.slice(5, 16))}</span>` +
+           `<span class="exp"><button data-mid="${c.mid}" title="去掉导出记录，下次导出时会再导出它">下次再导出</button></span>`;
+  return c.decision === '通过' ? '<span class="exp new">待导出</span>' : '<span class="hint">—</span>';
+}
+async function load() {
+  const d = await api('GET', '/api/filter/list?' + new URLSearchParams({decision: view, q: $('q').value.trim(), manual: manualOnly ? '1' : ''}));
+  const s = d.summary;
+  if (s['未筛选']) { await runOnly(); return; }  // 有新抓全的频道还没筛选过，自动跑一次
+  $('crawlMsg').innerHTML = `频道已抓全 <b>${s['已抓全']}</b> 个，参加筛选；还有 <b>${s['未抓全']}</b> 个没抓全，不参加筛选，下次采集会继续展开。`;
+  const tabs = [['通过', '入选', s['通过']], ['淘汰', '筛掉', s['淘汰']], ['待定', '待定', s['待定']],
+                ['manual', '手动改过', s['手动']], ['', '全部', s['通过'] + s['淘汰'] + s['待定']]];
+  $('tabs').innerHTML = tabs.map(([k, t, n]) => `<button data-k="${k}" class="${(k === 'manual' ? manualOnly : !manualOnly && view === k) ? 'on' : ''}">${t} ${n}</button>`).join('');
+  $('exportBtn').textContent = $('incExported').checked ? `导出全部入选频道（${s['通过']}）` : `导出新入选频道（${s['待导出']}）`;
+  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => {
+    if (b.dataset.k === 'manual') { manualOnly = true; view = ''; } else { manualOnly = false; view = b.dataset.k; }
+    load();
+  });
+  $('table').innerHTML = !d.rows.length ? '<div class="placeholder">没有频道</div>' : `<table>
+    <tr><th>结论</th><th>原频道名（B站）</th><th>新名字</th><th class="num">粉丝</th><th>类别</th><th class="num">已抓/总视频</th>
+        <th>规则统计</th><th>原因 / 备注</th><th>抓取</th><th>导出</th><th>改判</th></tr>
+    ${d.rows.map(c => `<tr>
+      <td><span class="badge b-${c.decision}">${LABEL[c.decision]}</span>${c.manual_decision ? `<span class="manual" title="自动判断为：${LABEL[c.auto_decision]}">手动</span>` : ''}</td>
+      <td style="white-space:nowrap"><span class="up" data-mid="${c.mid}">${esc(c.name)}</span><a class="ext" href="${esc(c.url)}" target="_blank" title="打开B站主页">↗</a></td>
+      <td>${c.decision === '通过' ? `<input class="name" data-mid="${c.mid}" value="${esc(c.channel_name || '')}">` : `<span class="hint">${esc(c.channel_name || '—')}</span>`}</td>
+      <td class="num ${rules.fans_on && c.fans > rules.fans_max ? 'over' : ''}">${fmt(c.fans)}</td>
+      <td class="cat" title="${esc(c.main_category)}">${esc(c.top_category)} › ${esc(last(c.main_category))}</td>
+      <td class="num">${c.n_videos} / ${c.total_videos ?? '?'}</td>
+      <td class="stats">${statLine(c)}</td>
+      <td class="reason">${esc(c.manual_decision ? (c.note || '手动改判') : (c.auto_reason || c.note))}</td>
+      <td>${c.status !== '已完成' ? '<span class="crawl next" title="手动改判过，但频道还没抓全">没抓全</span>' : c.decision === '待定' ? '<span class="crawl done">已抓全</span>' : '<span class="crawl done" title="已有筛选记录，下次采集不再抓取这个频道">已抓全·不再抓取</span>'}</td>
+      <td>${expCell(c)}</td>
+      <td><div class="ops">
+        ${c.decision !== '通过' ? `<button class="mini ok" data-mid="${c.mid}" data-d="通过">入选</button>` : ''}
+        ${c.decision !== '淘汰' ? `<button class="mini bad" data-mid="${c.mid}" data-d="淘汰">筛掉</button>` : ''}
+        ${c.manual_decision ? `<button class="mini" data-mid="${c.mid}" data-d="">恢复自动</button>` : ''}
+      </div></td>
+    </tr>`).join('')}</table>`;
+  $('table').querySelectorAll('.up').forEach(el => el.onclick = () => openDrawer(+el.dataset.mid));
+  $('table').querySelectorAll('.ops button').forEach(b => b.onclick = () => decide(+b.dataset.mid, b.dataset.d || null, !b.dataset.d));
+  $('table').querySelectorAll('.exp button').forEach(b => b.onclick = () => api('POST', `/api/filter/channel/${b.dataset.mid}`, {unexport: true}).then(load));
+  $('table').querySelectorAll('input.name').forEach(i => i.onchange = () => api('POST', `/api/filter/channel/${i.dataset.mid}`, {channel_name: i.value}).then(load));
+}
+
+async function decide(mid, decision, clear = false) {
+  await api('POST', `/api/filter/channel/${mid}`, clear ? {clear: true} : {decision});
+  load();
+  if ($('drawer').classList.contains('open') && cur === mid) openDrawer(mid);
+}
+
+// ---------- 频道详情 ----------
+async function openDrawer(mid) {
+  cur = mid;
+  detail = await api('GET', `/api/filter/channel/${mid}`);
+  const c = detail.channel, r = detail.review || {};
+  const dec = r.manual_decision || r.auto_decision;
+  $('dName').textContent = c.name;
+  $('dNewName').textContent = r.channel_name ? `新名字：${r.channel_name}` : '';
+  $('dLink').href = `https://space.bilibili.com/${c.mid}`;
+  $('dMeta').innerHTML = `<span>粉丝 ${fmt(c.fans)}</span><span>B站上视频 ${c.total_videos ?? '?'} 个</span><span>已抓到 ${detail.videos.length} 个</span>
+    <span>类别：${detail.categories.map(esc).join('；')}</span>`;
+  $('dDecision').innerHTML = dec ? `<span class="badge b-${dec}">${LABEL[dec]}</span>${r.manual_decision ? `<span class="manual">手动（自动判断为 ${LABEL[r.auto_decision]}）</span>` : ''}
+    <span class="msg" style="margin-left:6px">${esc(r.auto_reason || '')}</span>` : '<span class="msg">未筛选</span>';
+  $('dNote').value = r.note || '';
+  $('dNote').onchange = () => api('POST', `/api/filter/channel/${mid}`, {note: $('dNote').value}).then(load);
+  dView = 'all';
+  $('drawer').classList.add('open'); $('mask').classList.add('open');
+  renderVideos();
+}
+function renderVideos() {
+  const v = detail.videos;
+  const tabs = [['all', '全部', () => true], ['un', '无关', x => !x.related], ['dom', '国产品牌', x => x.domestic], ['jb', '鉴宝', x => x.jianbao],
+    ...detail.title_rules.map(t => ['c:' + t.id, t.label, x => x.custom.some(y => y.id === t.id)])];
+  $('dTabs').innerHTML = tabs.map(([k, t, f]) => `<button data-k="${esc(k)}" class="${dView === k ? 'on' : ''}">${esc(t)} ${v.filter(f).length}</button>`).join('');
+  $('dTabs').querySelectorAll('button').forEach(b => b.onclick = () => { dView = b.dataset.k; renderVideos(); });
+  const rows = v.filter(tabs.find(t => t[0] === dView)[2]);
+  $('dCount').textContent = `显示 ${rows.length} 个`;
+  $('dTable').innerHTML = !rows.length ? '<div class="placeholder">没有视频</div>' : `<table>
+    <tr><th>标题</th><th>判断依据</th><th class="num">播放</th><th>发布</th></tr>
+    ${rows.map(x => `<tr>
+      <td><a href="${esc(x.url)}" target="_blank">${esc(x.title)}</a></td>
+      <td style="white-space:nowrap">${x.related ? `<span class="flag f-rel">相关：${esc(x.related)}</span>` : '<span class="flag f-un">无关</span>'}
+        ${x.domestic ? `<span class="flag f-dom">国产：${esc(x.domestic)}</span>` : ''}${x.jianbao ? `<span class="flag f-jb">鉴宝：${esc(x.jianbao)}</span>` : ''}
+        ${x.custom.map(y => `<span class="flag f-cu">${esc(y.label)}：${esc(y.word)}</span>`).join('')}</td>
+      <td class="num">${fmt(x.play)}</td><td style="white-space:nowrap;color:var(--muted)">${esc(x.pubdate)}</td>
+    </tr>`).join('')}</table>`;
+}
+function closeDrawer() { $('drawer').classList.remove('open'); $('mask').classList.remove('open'); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+
+// ---------- 导出 ----------
+async function exportFiles() {
+  try {
+    const r = await api('POST', '/api/filter/export', {include_exported: $('incExported').checked});
+    const skip = r.skipped ? `（跳过以前导出过的 ${r.skipped} 个）` : '';
+    if (!r.count) { $('exportMsg').textContent = '没有新的入选频道可以导出' + skip + '。要再导出一遍，勾选「也导出以前导出过的」。'; return; }
+    $('exportMsg').innerHTML = `已导出 ${r.count} 个入选频道${skip}：<br>` + r.files.map(esc).join('<br>');
+    await api('POST', '/api/open-output');
+    load();
+  } catch (e) { alert('导出失败：' + e.message); }
+}
+
+let timer;
+$('q').oninput = () => { clearTimeout(timer); timer = setTimeout(load, 300); };
+$('incExported').onchange = load;
+(async () => { await loadRules(); load(); })();
+</script>
+</body>
+</html>

@@ -71,6 +71,18 @@ class Categories:
         self.tree = tree
         self.save()
 
+    def paths(self):
+        """类别树里所有节点的路径，如「科技 > 数码产品」"""
+        out = set()
+
+        def walk(nodes, path):
+            for n in nodes:
+                p = path + [n["name"]]
+                out.add(" > ".join(p))
+                walk(n["children"], p)
+        walk(self.tree, [])
+        return out
+
     def keyword_map(self, selected_ids):
         """选中节点 -> {关键词: [类别路径, ...]}。关键词为空时用类别名本身。"""
         selected = set(selected_ids)

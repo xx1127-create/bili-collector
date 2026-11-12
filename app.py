@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 
 from flask import Flask, jsonify, request, send_file
@@ -12,12 +13,13 @@ from bili import BiliClient, QRLogin
 from categories import Categories
 from crawler import Job
 import results
-from export import export_all
+from export import export_all, export_review
+from review import Reviewer
 from store import Store
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-DATA = os.path.join(BASE, "data")
-OUT = os.path.join(BASE, "output")
+DATA = os.environ.get("BILI_DATA") or os.path.join(BASE, "data")  # 测试时可指向数据副本
+OUT = os.environ.get("BILI_OUT") or os.path.join(BASE, "output")
 os.makedirs(DATA, exist_ok=True)
 
 SETTINGS = os.path.join(DATA, "settings.json")  # 保存 B站 Cookie，只在本机
@@ -38,7 +40,10 @@ def save_settings(s):
 
 store = Store(os.path.join(DATA, "bili.db"))
 cats = Categories(os.path.join(BASE, "categories.json"))
-job = Job(store, cats, lambda: export_all(store, OUT))
+reviewer = Reviewer(store, cats, os.environ.get("BILI_RULES") or os.path.join(BASE, "filter_rules.json"))
+job = Job(store, cats, reviewer,
+          state_path=os.path.join(DATA, "crawl_state.json"),  # 采集断点和休息时间
+          cookie_fn=lambda: load_settings().get("cookie", ""))
 app = Flask(__name__)
 
 
@@ -76,6 +81,72 @@ def results_channel(mid):
 @app.get("/api/results/categories")
 def results_categories():
     return jsonify(results.category_counts(store))
+
+
+@app.get("/api/results/orphans")
+def results_orphans():
+    return jsonify(store.orphan_categories(cats.paths()))
+
+
+@app.post("/api/results/prune")
+def results_prune():
+    if job.running:
+        return jsonify(error="任务运行中，不能清理"), 400
+    return jsonify(store.prune_categories(cats.paths()))
+
+
+# ---------------- 筛选 ----------------
+@app.get("/filter")
+def filter_page():
+    return send_file(os.path.join(BASE, "filter.html"))
+
+
+@app.get("/api/filter/rules")
+def filter_rules():
+    return jsonify(reviewer.rules())
+
+
+@app.put("/api/filter/rules")
+def filter_save_rules():
+    try:
+        reviewer.save_rules(request.get_json())
+    except (KeyError, ValueError, TypeError) as e:
+        return jsonify(error=f"规则格式不对：{e}"), 400
+    return jsonify(ok=True)
+
+
+@app.post("/api/filter/run")
+def filter_run():
+    return jsonify(reviewer.run())
+
+
+@app.get("/api/filter/list")
+def filter_list():
+    a = request.args
+    return jsonify(summary=reviewer.summary(),
+                   rows=reviewer.list(a.get("decision", ""), a.get("q", "").strip(), a.get("manual") == "1"))
+
+
+@app.get("/api/filter/channel/<int:mid>")
+def filter_channel(mid):
+    return jsonify(reviewer.channel_detail(mid))
+
+
+@app.post("/api/filter/channel/<int:mid>")
+def filter_set(mid):
+    b = request.get_json()
+    if b.get("decision") not in (None, "通过", "淘汰", "待定"):
+        return jsonify(error="结论只能是 通过 / 淘汰 / 待定"), 400
+    reviewer.set_manual(mid, decision=b.get("decision"), note=b.get("note"), channel_name=b.get("channel_name"),
+                        clear=bool(b.get("clear")), unexport=bool(b.get("unexport")))
+    return jsonify(ok=True)
+
+
+@app.post("/api/filter/export")
+def filter_export():
+    b = request.get_json(silent=True) or {}
+    return jsonify(export_review(reviewer, store, OUT, os.path.join(BASE, "templates", "B站模版.xlsx"),
+                                 include_exported=bool(b.get("include_exported"))))
 
 
 @app.get("/api/categories")
@@ -145,7 +216,16 @@ def qr_poll():
 @app.post("/api/start")
 def start():
     try:
-        job.start({**request.get_json(), "cookie": load_settings().get("cookie", "")})
+        job.start(request.get_json())
+    except (RuntimeError, ValueError) as e:
+        return jsonify(error=str(e)), 400
+    return jsonify(ok=True)
+
+
+@app.post("/api/resume")
+def resume():
+    try:
+        job.start(request.get_json(silent=True) or {}, resume=True)
     except (RuntimeError, ValueError) as e:
         return jsonify(error=str(e)), 400
     return jsonify(ok=True)
@@ -160,12 +240,16 @@ def stop():
 @app.get("/api/status")
 def status():
     return jsonify(running=job.running, **{k: v for k, v in job.state.items() if k != "running"},
-                   stats=store.stats(), logs=list(job.logs)[-300:])
+                   stats=store.stats(), logs=list(job.logs)[-300:],
+                   checkpoint=job.checkpoint_info(), now=time.time())
 
 
 @app.post("/api/export")
 def export():
-    return jsonify(files=export_all(store, OUT))
+    try:
+        return jsonify(files=export_all(store, OUT))
+    except Exception as e:
+        return jsonify(error=f"导出失败：{e}"), 500
 
 
 @app.post("/api/open-output")
@@ -181,6 +265,7 @@ def clear():
     if job.running:
         return jsonify(error="任务运行中，不能清空"), 400
     store.clear()
+    job.forget()  # 数据清空了，断点也没意义了
     return jsonify(ok=True)
 
 

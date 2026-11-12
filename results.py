@@ -42,7 +42,8 @@ def channels(store, category="", q="", sort="hits", page=1, size=50):
                {where} GROUP BY c.mid"""
     total = store.q(f"SELECT COUNT(*) n FROM (SELECT c.mid {base})", args)[0]["n"]
     rows = store.q(f"""
-        SELECT c.*, COUNT(DISTINCT h.bvid) hit_count, GROUP_CONCAT(DISTINCT h.category) cats
+        SELECT c.*, COUNT(DISTINCT h.bvid) hit_count, GROUP_CONCAT(DISTINCT h.category) cats,
+               (SELECT COALESCE(manual_decision, auto_decision) FROM reviews r WHERE r.mid = c.mid) decision
         {base} ORDER BY {CHANNEL_SORTS.get(sort, CHANNEL_SORTS['hits'])}
         LIMIT ? OFFSET ?""", args + [size, (page - 1) * size])
     for r in rows:

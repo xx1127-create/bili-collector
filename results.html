@@ -33,6 +33,9 @@
   .cat .n { color:var(--muted); font-size:12px; flex-shrink:0; }
   .cat.on .n { color:var(--pink); }
   .empty-cats { color:var(--muted); font-size:13px; }
+  .orphans { background:#fff7e6; border:1px solid #ffd591; border-radius:6px; padding:8px 10px; margin-bottom:10px; font-size:12px; color:#874d00; }
+  .orphans ul { margin:4px 0 6px; padding-left:16px; }
+  .orphans button { font-size:12px; padding:3px 8px; }
 
   /* 工具条 */
   .toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
@@ -64,6 +67,9 @@
   .st-失败 { background:#fdecec; color:#e04848; }
   .st-未完成 { background:#fff4e5; color:#e07b00; }
   .st-未展开 { background:#f1f2f3; color:var(--muted); }
+  .sf-通过 { background:#e8f7ef; color:#0b9b5e; }
+  .sf-淘汰 { background:#fdecec; color:#e04848; }
+  .sf-待定 { background:#fff4e5; color:#e07b00; }
   .pager { display:flex; gap:8px; align-items:center; justify-content:center; margin-top:12px; color:var(--muted); }
   .placeholder { text-align:center; color:var(--muted); padding:40px 0; }
 
@@ -81,11 +87,12 @@
 <body>
 <header>
   <h1>B站视频采集器</h1>
-  <nav><a href="/">采集</a><a href="/results" class="on">查看结果</a></nav>
+  <nav><a href="/">采集</a><a href="/results" class="on">查看结果</a><a href="/filter">筛选</a></nav>
   <span class="stats" id="stats"></span>
 </header>
 <main>
   <aside class="card cats">
+    <div class="orphans" id="orphans" hidden></div>
     <h2>按类别筛选</h2>
     <div id="cats"></div>
   </aside>
@@ -160,6 +167,24 @@ async function loadCats() {
   $('cats').querySelectorAll('.cat').forEach(el => el.onclick = () => { st.category = el.dataset.p; st.page = 1; loadCats(); load(); });
 }
 
+async function loadOrphans() {
+  const list = await get('/api/results/orphans', {});
+  const el = $('orphans');
+  el.hidden = !list.length;
+  if (!list.length) return;
+  el.innerHTML = `这些类别已经不在你的类别树里（删掉或改名了）：
+    <ul>${list.map(o => `<li>${esc(o.category)}（${o.videos} 个视频）</li>`).join('')}</ul>
+    <button id="pruneBtn">清理掉</button>`;
+  $('pruneBtn').onclick = async () => {
+    if (!confirm('删掉这些类别的搜索结果？\n只因为这些类别被搜到的频道，会连同它的视频和筛选记录一起删掉，不能恢复。')) return;
+    const r = await (await fetch('/api/results/prune', {method: 'POST'})).json();
+    if (r.error) return alert(r.error);
+    alert(`已清理：${r.hits} 条搜索命中，${r.channels} 个频道，${r.videos} 个视频`);
+    st.category = ''; st.page = 1;
+    loadOrphans(); loadCats(); load();
+  };
+}
+
 // ---------- 列表 ----------
 function setView(v) {
   st.view = v; st.page = 1;
@@ -186,13 +211,14 @@ async function load() {
       <td class="num">${fmt(v.play)}</td><td class="nowrap">${esc(v.pubdate)}</td><td class="nowrap">${esc(v.duration)}</td>
     </tr>`).join('')}</table>`;
   else $('table').innerHTML = `<table>
-    <tr><th>UP主</th><th class="num">粉丝</th><th class="num">视频总数</th><th class="num">已取</th><th class="num">搜索命中</th><th>命中类别</th><th>展开状态</th></tr>
+    <tr><th>UP主</th><th class="num">粉丝</th><th class="num">视频总数</th><th class="num">已取</th><th class="num">搜索命中</th><th>命中类别</th><th>展开状态</th><th>筛选</th></tr>
     ${d.rows.map(c => `<tr>
       <td><span class="up title" data-mid="${c.mid}">${esc(c.name)}</span></td>
       <td class="num">${fmt(c.fans)}</td><td class="num">${c.total_videos ?? '—'}</td><td class="num">${c.fetched_videos ?? '—'}</td>
       <td class="num">${c.hit_count}</td>
       <td><div class="sub" style="margin:0">${c.cats.map(x => `<span class="chip" title="${esc(x)}">${esc(last(x))}</span>`).join('')}</div></td>
       <td><span class="status st-${esc(c.status)}">${esc(c.status)}</span></td>
+      <td>${c.decision ? `<a href="/filter" class="status sf-${esc(c.decision)}" title="${c.decision === '待定' ? '下次采集会展开' : '已有筛选记录，下次采集不再抓取'}">${{'通过': '入选', '淘汰': '筛掉', '待定': '待定'}[c.decision]}${c.decision === '待定' ? '' : ' · 不再抓取'}</a>` : '<span class="status st-未展开">未筛选</span>'}</td>
     </tr>`).join('')}</table>`;
   $('table').querySelectorAll('.up').forEach(el => el.onclick = () => openDrawer(+el.dataset.mid));
   pager($('pager'), d.total, st.page, p => { st.page = p; load(); scrollTo(0, 0); });
@@ -235,7 +261,8 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(
 
 (async () => {
   const s = await (await fetch('/api/status')).json();
-  $('stats').textContent = `视频 ${s.stats.videos} · 搜索命中 ${s.stats.hits} · 频道 ${s.stats.channels}（已展开 ${s.stats.channels_done}）`;
+  $('stats').textContent = `视频 ${s.stats.videos} · 搜索命中 ${s.stats.hits} · 频道 ${s.stats.channels}（已抓全 ${s.stats.channels_done}，没抓全 ${s.stats.channels - s.stats.channels_done}）`;
+  loadOrphans();
   loadCats();
   setView('videos');
 })();

@@ -49,6 +49,9 @@
   .form input[type=number], .form select { width:120px; padding:4px 6px; border:1px solid var(--line); border-radius:4px; }
   .form .note { color:var(--muted); font-size:12px; margin-left:6px; }
   .actions { display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
+  .form input.short { width:60px; }
+  .resume { margin-top:12px; padding:8px 10px; background:#f0f7ff; border:1px solid #cfe3ff; border-radius:6px; font-size:13px; color:#1d4f91; }
+  .resume.rest { background:#fff7e6; border-color:#ffd591; color:#874d00; }
   .progress { margin-top:12px; padding:8px 10px; background:#fff4f7; border-radius:6px; color:var(--pink); min-height:20px; }
   .log { margin-top:10px; height:300px; overflow:auto; background:#1f2329; color:#d6dbe0; font:12px/1.6 Menlo, Consolas, monospace; padding:8px 10px; border-radius:6px; white-space:pre-wrap; }
   .right { display:flex; flex-direction:column; gap:16px; }
@@ -79,7 +82,7 @@
 <body>
 <header>
   <h1>B站视频采集器</h1>
-  <nav><a href="/" class="on">采集</a><a href="/results">查看结果</a></nav>
+  <nav><a href="/" class="on">采集</a><a href="/results">查看结果</a><a href="/filter">筛选</a></nav>
   <span id="phase" style="color:var(--muted)"></span>
   <span class="stats" id="stats"></span>
 </header>
@@ -159,21 +162,32 @@
         <label>展开频道</label>
         <div><input type="checkbox" id="expand" checked><span class="note">打开搜到的 UP 主主页，列出其所有视频</span></div>
         <label>最多展开频道数</label>
-        <div><input type="number" id="max_channels" min="0" value="0"><span class="note">0 = 不限，被搜到次数多的优先</span></div>
+        <div><input type="number" id="max_channels" min="0" value="0"><span class="note">0 = 不限。本次搜到的和以前搜到还没抓全的频道一起展开，被搜到次数多的优先</span></div>
         <label>每个频道最多取视频</label>
-        <div><input type="number" id="max_videos" min="0" value="0"><span class="note">0 = 全部</span></div>
-        <label>跳过已展开的频道</label>
-        <div><input type="checkbox" id="skip_done" checked><span class="note">之前抓完的不再重复抓（失败/未完成的会重抓）</span></div>
+        <div><input type="number" id="max_videos" min="1" max="5000" value="5000"><span class="note">最多 5000。视频比这个多的频道只取最新的这么多个，取到就算抓全</span></div>
+        <label>跳过已抓全的频道</label>
+        <div><input type="checkbox" id="skip_done" checked><span class="note">之前抓全的不再重复抓（失败/中断/没抓全的会重抓）。已筛选为入选或筛掉的频道，无论勾不勾都不再抓</span></div>
         <label>请求间隔（秒）</label>
         <div><input type="number" id="interval" min="1" step="0.5" value="3"><span class="note">太快会被 B 站限流（会自动暂停几分钟再继续）</span></div>
+        <label>限时采集</label>
+        <div><input type="checkbox" id="time_limit_on"> 每次最多 <input type="number" class="short" id="time_limit" min="1" value="10"> 分钟，
+          之后休息 <select id="rest_min" style="width:auto">
+            <option value="3">3</option><option value="5">5</option><option value="10" selected>10</option>
+            <option value="15">15</option><option value="20">20</option><option value="30">30</option><option value="60">60</option>
+          </select> 分钟
+          <span class="note">采集时长默认 10 分钟，可以自己改；休息最短 3 分钟，休息期间不能采集</span></div>
+        <label>休息完自动继续</label>
+        <div><input type="checkbox" id="auto_continue"><span class="note">限时采集时有效：休息结束后自动从断掉的地方接着采，一直到采完</span></div>
       </div>
       <div class="actions">
         <button class="primary" id="btnStart" onclick="start()">开始抓取</button>
+        <button id="btnResume" onclick="resume()" disabled>继续上次采集</button>
         <button id="btnStop" onclick="stop()" disabled>停止</button>
-        <button onclick="exportNow()">立即导出</button>
+        <button onclick="exportNow()" title="把抓到的全部数据导出成 Excel 和 JSON，放在 output 文件夹">导出数据文件</button>
         <button onclick="openOutput()">打开结果文件夹</button>
         <button class="danger" onclick="clearData()">清空数据</button>
       </div>
+      <div class="resume" id="resumeBox" hidden></div>
       <div class="progress" id="progress"></div>
     </section>
     <section class="card">
@@ -342,9 +356,19 @@ async function qrPoll() {
 function qrCancel() { clearInterval(qrTimer); $('qrBox').style.display = 'none'; }
 
 // ---------- 任务 ----------
+function limitOpts() {
+  const lim = Math.max(1, Math.round(+$('time_limit').value) || 10);
+  const rest = Math.max(3, +$('rest_min').value || 10);
+  $('time_limit').value = lim;
+  return {time_limit_on: $('time_limit_on').checked, time_limit: lim, rest_min: rest, auto_continue: $('auto_continue').checked};
+}
+let cpState = null;
 async function start() {
   if (!checked.size) return alert('请先勾选要搜索的类别');
+  if (cpState && cpState.resumable &&
+      !confirm('上次的采集还没完成（' + cpState.resume_desc + '）。\n开始新的采集会放弃上次的进度（已经抓到的数据不会丢）。\n\n要接着上次抓，请点「取消」，再点「继续上次采集」。')) return;
   const opts = {
+    ...limitOpts(),
     node_ids: [...checked],
     pages: +$('pages').value, order: $('order').value, days: +$('days').value,
     duration: +$('duration').value, expand_channels: $('expand').checked,
@@ -354,9 +378,33 @@ async function start() {
   try { await api('POST', '/api/start', opts); poll(); }
   catch (e) { alert(e.message); }
 }
-async function stop() { await api('POST', '/api/stop'); }
+async function resume() {
+  try { await api('POST', '/api/resume', limitOpts()); poll(); }
+  catch (e) { alert(e.message); }
+}
+async function stop() { await api('POST', '/api/stop'); poll(); }
+const hm = t => new Date(t * 1000).toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'});
+function mmss(sec) { sec = Math.max(0, Math.ceil(sec)); return `${Math.floor(sec / 60)} 分 ${String(sec % 60).padStart(2, '0')} 秒`; }
+function showCheckpoint(s) {
+  const cp = cpState = s.checkpoint;
+  const rest = cp.next_allowed - s.now;
+  const box = $('resumeBox');
+  const parts = [];
+  if (cp.resumable && !s.running) parts.push(`上次没采完：${esc(cp.resume_desc)}。点「继续上次采集」从这里接着抓。`);
+  if (rest > 0 && !s.running) parts.push(cp.auto_at ? `休息中，<b>${hm(cp.auto_at)}</b> 自动继续（还有 ${mmss(cp.auto_at - s.now)}）。点「停止」可以取消自动继续。`
+                                                 : `休息中，<b>${hm(cp.next_allowed)}</b> 以后才能再次采集（还有 ${mmss(rest)}）。`);
+  box.hidden = !parts.length;
+  box.className = 'resume' + (rest > 0 && !s.running ? ' rest' : '');
+  box.innerHTML = parts.join('<br>');
+  const resting = rest > 0;
+  $('btnStart').disabled = s.running || resting;
+  $('btnResume').disabled = s.running || resting || !cp.resumable;
+  $('btnStop').disabled = !s.running && !cp.auto_at;
+  $('btnStop').textContent = !s.running && cp.auto_at ? '取消自动继续' : '停止';
+}
+let exportMsg = '';
 async function exportNow() {
-  try { const r = await api('POST', '/api/export'); alert('已导出：\n' + r.files.join('\n')); }
+  try { const r = await api('POST', '/api/export'); exportMsg = '已导出：' + r.files.join('  '); $('progress').textContent = exportMsg; }
   catch (e) { alert('导出失败：' + e.message); }
 }
 async function openOutput() { await api('POST', '/api/open-output'); }
@@ -369,11 +417,10 @@ let lastLogLen = -1;
 async function poll() {
   try {
     const s = await api('GET', '/api/status');
-    $('stats').textContent = `视频 ${s.stats.videos} · 搜索命中 ${s.stats.hits} · 频道 ${s.stats.channels}（已展开 ${s.stats.channels_done}）`;
+    $('stats').textContent = `视频 ${s.stats.videos} · 搜索命中 ${s.stats.hits} · 频道 ${s.stats.channels}（已抓全 ${s.stats.channels_done}，没抓全 ${s.stats.channels - s.stats.channels_done}）`;
     $('phase').textContent = s.running ? `● ${s.phase}` : s.phase;
-    $('progress').textContent = s.progress || (s.running ? '' : (s.last_export ? '结果文件：' + s.last_export.join('  ') : ''));
-    $('btnStart').disabled = s.running;
-    $('btnStop').disabled = !s.running;
+    $('progress').textContent = s.running ? s.progress : exportMsg;
+    showCheckpoint(s);
     const log = $('log');
     if (s.logs.length !== lastLogLen || s.running) {
       const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 30;

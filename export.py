@@ -3,12 +3,18 @@ import json
 import os
 import time
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Font, PatternFill
 
 HEADER_FILL = PatternFill("solid", fgColor="FB7299")
 HEADER_FONT = Font(bold=True, color="FFFFFF")
 LINK_FONT = Font(color="0563C1", underline="single")
+
+
+def _clean(v):
+    """去掉 Excel 不允许的隐藏控制字符（有的 B站标题里带着），否则整个文件写不出来"""
+    return ILLEGAL_CHARACTERS_RE.sub("", v) if isinstance(v, str) else v
 
 
 def _sheet(wb, title, headers, rows, widths, link_cols=()):
@@ -17,7 +23,7 @@ def _sheet(wb, title, headers, rows, widths, link_cols=()):
     for c in ws[1]:
         c.fill, c.font = HEADER_FILL, HEADER_FONT
     for r in rows:
-        ws.append(r)
+        ws.append([_clean(v) for v in r])
     for col in link_cols:
         for row in ws.iter_rows(min_row=2, min_col=col, max_col=col):
             c = row[0]
@@ -90,3 +96,110 @@ def export_all(store, out_dir):
     with open(js, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
     return [xlsx, js]
+
+
+# ---------------- 筛选结果导出 ----------------
+AI_PROMPT = """你是 B 站频道审核员。下面是按规则初筛后「入选」的频道，每个频道附有已抓到的视频标题。
+请逐个复核，判断是否保留，标准如下：
+1. 频道内容要和它所属的类别相关：跟类别无关的视频不能超过三分之一。
+2. 科技类频道：讲中国自主研制品牌（华为、小米、比亚迪等国产品牌）的视频不能超过三分之一。
+3. 考古类频道：讲鉴宝、古玩鉴定、收藏估价的视频不能超过三分之一。
+4. 如果频道内容很杂（例如生活、美食、旅游混在一起），标注「雜」。
+
+请输出一张表格，每个频道一行，列为：
+| 原频道名 | 新名字 | 频道主页 | 结论（保留 / 剔除） | 理由（一句话） | Tags（一级类别，内容杂则写「雜」） |
+"""
+
+
+def rule_summary(r):
+    """把启用的规则写成一句句人话"""
+    out = []
+    if r["unrelated_on"]:
+        out.append(f"无关视频 ≤ {r['unrelated_max']}%")
+    if r["domestic_on"]:
+        out.append(f"{r['domestic_scope']}类国产品牌视频 ≤ {r['domestic_max']}%")
+    if r["jianbao_on"]:
+        out.append(f"{r['jianbao_scope']}类鉴宝视频 ≤ {r['jianbao_max']}%")
+    if r["fans_on"]:
+        out.append(f"粉丝 ≤ {r['fans_max']}")
+    fields = {"fans": "粉丝数", "total_videos": "视频总数", "days_since_update": "停更天数", "avg_play": "平均播放量"}
+    for c in r["custom_rules"]:
+        if not c["enabled"]:
+            continue
+        scope = f"{c['scope']}类频道" if c["scope"] else "所有频道"
+        op = {">": "超过", "<": "低于"}[c["op"]]
+        if c["type"] == "title_ratio":
+            out.append(f"{c['label']}：{scope}标题含「{c['words']}」的视频{op} {c['value']}% 则筛掉")
+        elif c["type"] == "name_contains":
+            out.append(f"{c['label']}：{scope}频道名含「{c['words']}」则筛掉")
+        else:
+            out.append(f"{c['label']}：{scope}{fields[c['field']]}{op} {c['value']:g} 则筛掉")
+    return out or ["（没有启用任何规则）"]
+
+
+def _free_name(out_dir, stem, ext):
+    """同一天导出多次时不覆盖：B站_20261111.xlsx、B站_20261111_2.xlsx …"""
+    name, i = f"{stem}{ext}", 1
+    while os.path.exists(os.path.join(out_dir, name)):
+        i += 1
+        name = f"{stem}_{i}{ext}"
+    return os.path.join(out_dir, name)
+
+
+def export_review(reviewer, store, out_dir, template_path, max_titles=300, include_exported=False):
+    """导出两个文件：给 AI 复核的 Markdown，和按标准模版填好的 Excel。只包含「入选」的频道；
+    默认跳过以前导出过的，导出后给这些频道记上导出时间和文件名。"""
+    os.makedirs(out_dir, exist_ok=True)
+    day = time.strftime("%Y%m%d")
+    rows = reviewer.list(decision="通过", new_only=not include_exported)
+    skipped = 0 if include_exported else reviewer.summary()["通过"] - len(rows)
+    if not rows:
+        return {"files": [], "count": 0, "skipped": skipped}
+    r = reviewer.rules()
+
+    # 1) 给 AI 审查
+    lines = [f"# B站频道复核清单（{time.strftime('%Y-%m-%d %H:%M')}）", "", AI_PROMPT,
+             "初筛时启用的规则：" + "；".join(rule_summary(r)) + "。",
+             f"共 {len(rows)} 个频道。", ""]
+    for i, c in enumerate(rows, 1):
+        vids = store.q("SELECT title FROM videos WHERE mid = ? ORDER BY pubdate DESC", (c["mid"],))
+        cats = store.q("""SELECT DISTINCT h.category FROM hits h JOIN videos v ON v.bvid = h.bvid
+                          WHERE v.mid = ?""", (c["mid"],))
+        stats = [f"无关 {c['unrelated_ratio']}%"] if c["unrelated_ratio"] is not None else []
+        if c["domestic_ratio"] is not None:
+            stats.append(f"国产品牌 {c['domestic_ratio']}%")
+        if c["jianbao_ratio"] is not None:
+            stats.append(f"鉴宝 {c['jianbao_ratio']}%")
+        stats += [f"{k} {v}" for k, v in c["custom_stats"].items()]
+        lines += [f"## {i}. {c['name']}（新名字：{c['channel_name'] or c['name']}）",
+                  f"- 主页：{c['url']}",
+                  f"- 粉丝：{c['fans']}　B站上视频总数：{c['total_videos']}　已抓到：{len(vids)}",
+                  f"- 命中类别：{'；'.join(x['category'] for x in cats)}",
+                  f"- 规则统计：{'，'.join(stats)}" + ("（手动改判为入选）" if c["manual_decision"] else "")]
+        if c["note"]:
+            lines.append(f"- 备注：{c['note']}")
+        shown = vids[:max_titles]
+        lines.append(f"- 视频标题（共 {len(vids)} 个" + (f"，以下是最新的 {max_titles} 个" if len(vids) > max_titles else "") + "）：")
+        lines += [f"  - {v['title']}" for v in shown]
+        lines.append("")
+    md = _free_name(out_dir, f"给AI审查_{day}", ".md")
+    with open(md, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+    # 2) 标准格式（按模版填写，第 3 行开始是数据）
+    wb = load_workbook(template_path)
+    ws = wb["B站汇总"] if "B站汇总" in wb.sheetnames else wb.active
+    for row in ws.iter_rows(min_row=3, max_row=max(ws.max_row, 3)):
+        for cell in row:
+            cell.value = None
+    for i, c in enumerate(rows, 3):
+        ws.cell(i, 1, c["url"])
+        ws.cell(i, 2, c["total_videos"])
+        ws.cell(i, 3, "Channel")
+        ws.cell(i, 4, None)  # PublishDate 留空
+        ws.cell(i, 5, _clean(c["channel_name"] or c["name"]))
+        ws.cell(i, 6, c["top_category"])
+    xlsx = _free_name(out_dir, f"B站_{day}", ".xlsx")
+    wb.save(xlsx)
+    reviewer.mark_exported([c["mid"] for c in rows], os.path.basename(xlsx))
+    return {"files": [md, xlsx], "count": len(rows), "skipped": skipped}

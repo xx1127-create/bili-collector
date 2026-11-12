@@ -84,6 +84,32 @@ class Store:
             "channels_done": self.q("SELECT COUNT(*) n FROM channels WHERE status='已完成'")[0]["n"],
         }
 
+    def orphan_categories(self, valid_paths):
+        """搜索结果里有、但类别树里已经没有的类别（被删掉或改名的）"""
+        rows = self.q("""SELECT h.category, COUNT(DISTINCT h.bvid) videos, COUNT(DISTINCT v.mid) channels
+                         FROM hits h LEFT JOIN videos v ON v.bvid = h.bvid GROUP BY h.category""")
+        return [r for r in rows if r["category"] not in valid_paths]
+
+    def prune_categories(self, valid_paths):
+        """删掉不在类别树里的命中记录；频道如果因此一个类别都不剩，连同它的视频、筛选记录一起删掉"""
+        cats = [r["category"] for r in self.orphan_categories(valid_paths)]
+        if not cats:
+            return {"categories": [], "hits": 0, "channels": 0, "videos": 0}
+        marks = ",".join("?" * len(cats))
+        with self.lock:
+            db = self.db
+            mids = [r[0] for r in db.execute(f"""SELECT DISTINCT v.mid FROM hits h JOIN videos v ON v.bvid = h.bvid
+                                                 WHERE h.category IN ({marks}) AND v.mid IS NOT NULL""", cats)]
+            hits = db.execute(f"DELETE FROM hits WHERE category IN ({marks})", cats).rowcount
+            kept = {r[0] for r in db.execute("""SELECT DISTINCT v.mid FROM hits h JOIN videos v ON v.bvid = h.bvid""")}
+            gone = [(m,) for m in mids if m not in kept]
+            videos = sum(db.execute("DELETE FROM videos WHERE mid = ?", g).rowcount for g in gone)
+            db.executemany("DELETE FROM channels WHERE mid = ?", gone)
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name = 'reviews'").fetchone():
+                db.executemany("DELETE FROM reviews WHERE mid = ?", gone)
+            db.commit()
+        return {"categories": cats, "hits": hits, "channels": len(gone), "videos": videos}
+
     def clear(self):
         with self.lock:
             self.db.executescript("DELETE FROM videos; DELETE FROM hits; DELETE FROM channels;")
