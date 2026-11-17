@@ -69,6 +69,7 @@
   .howto summary { cursor:pointer; }
   .howto ol { padding-left:18px; margin:6px 0; }
   .howto p { margin:4px 0; }
+  .upd-msg { margin-top:10px; color:var(--muted); font-size:13px; line-height:1.8; }
 
   /* 弹窗 */
   dialog { border:none; border-radius:10px; padding:20px; width:440px; max-width:calc(100vw - 32px); box-shadow:0 10px 40px rgba(0,0,0,.2); }
@@ -193,6 +194,17 @@
     <section class="card">
       <h2>运行日志</h2>
       <div class="log" id="log"></div>
+    </section>
+    <section class="card">
+      <h2>设置备份与程序更新 <span class="hint">类别结构、筛选规则、词库和抓到的数据都在 data 文件夹里，更新程序不会动它们</span></h2>
+      <div class="actions" style="margin-top:0">
+        <button onclick="checkUpdate()">检查更新</button>
+        <button onclick="location.href = '/api/userdata/export'" title="把类别结构、筛选规则、词库存成一个文件（不含登录信息和抓到的数据）">导出设置</button>
+        <button onclick="$('importFile').click()" title="选择导出的设置文件，或旧版程序目录里的 categories.json / filter_rules.json">导入设置</button>
+        <button onclick="api('POST', '/api/open-backups')">打开自动备份文件夹</button>
+        <input type="file" id="importFile" accept=".json,application/json" hidden>
+      </div>
+      <div class="upd-msg" id="updMsg">每次修改类别或规则前，旧版本会自动备份到 data/backups（保留最近 50 份）。换电脑时先「导出设置」，在新电脑上「导入设置」。</div>
     </section>
   </div>
 </main>
@@ -412,6 +424,36 @@ async function clearData() {
   if (!confirm('确定清空所有已抓取的数据？（类别和关键词不受影响）')) return;
   try { await api('POST', '/api/clear'); poll(); } catch (e) { alert(e.message); }
 }
+
+// ---------- 设置备份与程序更新 ----------
+async function checkUpdate() {
+  $('updMsg').textContent = '正在检查…';
+  try {
+    const r = await api('GET', '/api/update/check'), l = r.latest;
+    if (r.up_to_date) { $('updMsg').textContent = `已经是最新版本（${l.date}：${l.message}）`; return; }
+    $('updMsg').innerHTML = (r.known ? `有新版本：${esc(l.date)}　${esc(l.message)}` + (r.behind ? `（共 ${r.behind} 个更新）` : '')
+                                     : `不知道当前是哪个版本。GitHub 上最新的是：${esc(l.date)}　${esc(l.message)}`) +
+      ` <button class="primary mini" onclick="doUpdate()">立即更新</button><br>只替换程序文件，data 文件夹里的设置和数据不会动。`;
+  } catch (e) { $('updMsg').textContent = e.message; }
+}
+async function doUpdate() {
+  if (!confirm('更新程序？\n只替换程序文件；类别结构、筛选规则、词库和抓到的数据都在 data 文件夹里，不会动。')) return;
+  $('updMsg').textContent = '正在更新…';
+  try {
+    const r = await api('POST', '/api/update');
+    $('updMsg').innerHTML = `✓ ${esc(r.message)}。<b>请关掉黑色的终端窗口，再双击「启动」</b>，新版本才会生效。`;
+  } catch (e) { $('updMsg').textContent = e.message; }
+}
+$('importFile').onchange = async e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  let data;
+  try { data = JSON.parse(await f.text()); } catch { return alert('这个文件不是有效的设置文件'); }
+  if (!confirm(`用「${f.name}」里的设置替换现在的设置？\n现在的设置会先自动备份，在「打开自动备份文件夹」里能找到。`)) return;
+  try { const r = await api('POST', '/api/userdata/import', data); alert('已导入：\n' + r.done.join('\n')); location.reload(); }
+  catch (e) { alert(e.message); }
+};
 
 let lastLogLen = -1;
 async function poll() {

@@ -6,8 +6,9 @@ import sys
 import threading
 import time
 import webbrowser
+from urllib.parse import quote
 
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, Response, jsonify, request, send_file
 
 from bili import BiliClient, QRLogin
 from categories import Categories
@@ -16,6 +17,8 @@ import results
 from export import export_all, export_review
 from review import Reviewer
 from store import Store
+from updater import Updater
+import userdata
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.environ.get("BILI_DATA") or os.path.join(BASE, "data")  # 测试时可指向数据副本
@@ -38,9 +41,19 @@ def save_settings(s):
     os.chmod(SETTINGS, 0o600)
 
 
+# 你的设置都在 data/ 里，更新程序不会覆盖；旧版放在程序目录里的设置文件，第一次启动时自动搬过来
+CATS_FILE = os.path.join(DATA, "categories.json")
+RULES_FILE = os.environ.get("BILI_RULES") or os.path.join(DATA, "filter_rules.json")
+for f, name in ((CATS_FILE, "categories.json"), (RULES_FILE, "filter_rules.json")):
+    legacy = None if os.environ.get("BILI_DATA") else os.path.join(BASE, name)  # 测试用数据副本时不搬真文件
+    moved = userdata.prepare(f, legacy=legacy, default=os.path.join(BASE, "defaults", name))
+    if moved:
+        print(moved)
+
 store = Store(os.path.join(DATA, "bili.db"))
-cats = Categories(os.path.join(BASE, "categories.json"))
-reviewer = Reviewer(store, cats, os.environ.get("BILI_RULES") or os.path.join(BASE, "filter_rules.json"))
+cats = Categories(CATS_FILE)
+reviewer = Reviewer(store, cats, RULES_FILE)
+updater = Updater(BASE)
 job = Job(store, cats, reviewer,
           state_path=os.path.join(DATA, "crawl_state.json"),  # 采集断点和休息时间
           cookie_fn=lambda: load_settings().get("cookie", ""))
@@ -103,7 +116,7 @@ def filter_page():
 
 @app.get("/api/filter/rules")
 def filter_rules():
-    return jsonify(reviewer.rules())
+    return jsonify({**reviewer.rules(), "tops": reviewer.top_categories()})
 
 
 @app.put("/api/filter/rules")
@@ -252,12 +265,60 @@ def export():
         return jsonify(error=f"导出失败：{e}"), 500
 
 
+def _open_folder(path):
+    os.makedirs(path, exist_ok=True)
+    opener = {"darwin": "open", "win32": "explorer"}.get(sys.platform, "xdg-open")
+    subprocess.Popen([opener, path])
+    return jsonify(ok=True)
+
+
 @app.post("/api/open-output")
 def open_output():
-    os.makedirs(OUT, exist_ok=True)
-    opener = {"darwin": "open", "win32": "explorer"}.get(sys.platform, "xdg-open")
-    subprocess.Popen([opener, OUT])
-    return jsonify(ok=True)
+    return _open_folder(OUT)
+
+
+# ---------------- 设置备份与程序更新 ----------------
+@app.get("/api/userdata/export")
+def userdata_export():
+    body = json.dumps(userdata.bundle(cats, reviewer), ensure_ascii=False, indent=2)
+    name = f"B站采集器设置_{time.strftime('%Y%m%d')}.json"
+    return Response(body, mimetype="application/json",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
+
+
+@app.post("/api/userdata/import")
+def userdata_import():
+    try:
+        done = userdata.import_bundle(request.get_json(), cats, reviewer)
+    except (KeyError, ValueError, TypeError, AttributeError) as e:
+        return jsonify(error=f"导入失败：{e}"), 400
+    reviewer.run()
+    return jsonify(done=done)
+
+
+@app.post("/api/open-backups")
+def open_backups():
+    return _open_folder(userdata.backup_dir(CATS_FILE))
+
+
+@app.get("/api/update/check")
+def update_check():
+    try:
+        return jsonify(updater.check())
+    except Exception as e:
+        return jsonify(error=f"检查更新失败（可能是连不上 GitHub）：{e}"), 502
+
+
+@app.post("/api/update")
+def update_apply():
+    if job.running:
+        return jsonify(error="正在采集，等采集结束或点「停止」后再更新"), 400
+    userdata.backup(CATS_FILE, "类别结构")  # 保险起见，更新前再备份一次设置（更新本身不会碰 data/）
+    userdata.backup(RULES_FILE, "筛选规则")
+    try:
+        return jsonify(message=updater.update())
+    except Exception as e:
+        return jsonify(error=f"更新失败：{e}"), 502
 
 
 @app.post("/api/clear")

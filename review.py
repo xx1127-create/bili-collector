@@ -1,19 +1,23 @@
 """频道筛选：按规则自动判断每个频道「入选 / 筛掉 / 待定」，支持手动改判，结果存数据库。
 （数据库里的结论值是 通过 / 淘汰 / 待定，页面上显示为 入选 / 筛掉 / 待定。）
 
-内置规则（每条可单独启用/停用，阈值和词表都在 filter_rules.json，可在「筛选」页面修改）：
-  1. 频道里跟所属一级类别无关的视频超过比例 → 筛掉
-  2. 科技频道里讲国产品牌的视频超过比例 → 筛掉
-  3. 考古频道里讲鉴宝的视频超过比例 → 筛掉
+规则和词库保存在 data/filter_rules.json（每次修改前自动备份），可在「筛选」页面修改。
+词库（word_lists）：一个个有名字的词表，如「国产品牌」「美食」。规则里要用词的地方都从词库里选，
+一条规则可以选多个词表，还可以另加几个词。
+内置规则（每条可单独启用/停用）：
+  1. 频道里跟所属一级类别无关的视频超过比例 → 筛掉（每个一级类别选哪些词表算「相关」）
+  2. 某类频道里讲国产品牌的视频超过比例 → 筛掉
+  3. 某类频道里讲鉴宝的视频超过比例 → 筛掉
   4. 粉丝数超过上限 → 筛掉
-  5. 已抓到的视频太少（频道没展开）→ 待定，不做判断
+  5. 已抓到的视频太少 → 待定，不做判断
 自定义规则（custom_rules，都是「满足条件就筛掉」）：
-  title_ratio   某类频道里，标题含指定词的视频占比 超过/低于 X% → 筛掉
-  name_contains 频道名含指定词 → 筛掉
+  title_ratio   某类频道里，标题含所选词表里的词的视频占比 超过/低于 X% → 筛掉
+  name_contains 频道名含所选词表里的词 → 筛掉
   number        粉丝数 / 视频总数 / 停更天数 / 平均播放量 大于/小于 某值 → 筛掉
 手动改判过的频道，重新运行筛选不会覆盖。入选的频道随机起一个像名字的新名字（如「听松记」），可以改。
 """
 import collections
+import copy
 import datetime
 import json
 import os
@@ -21,6 +25,8 @@ import random
 import re
 import time
 import uuid
+
+import userdata
 
 SUFFIXES = ["评测", "测评", "开箱", "教程", "好物", "推荐", "科普", "设备", "产品", "技术", "开发"]
 
@@ -38,28 +44,35 @@ DEFAULT_RULES = {
     "custom_rules": [],
     "domestic_scope": "科技",   # 规则 2 只对这个一级类别生效
     "jianbao_scope": "考古",    # 规则 3 只对这个一级类别生效
-    "related_words": {
-        "科技": "科技 数码 评测 测评 开箱 拆解 芯片 处理器 CPU GPU 显卡 电脑 笔记本 主机 装机 手机 平板 "
-                "相机 镜头 耳机 音箱 音频 屏幕 显示器 电视 投影 电池 充电 快充 充电宝 无线 蓝牙 WiFi 5G 路由器 "
-                "硬盘 SSD 内存 主板 机箱 散热 键盘 鼠标 手表 手环 眼镜 VR AR AI 人工智能 大模型 机器人 "
-                "自动化 编程 代码 程序 软件 系统 硬件 电子 半导体 新能源 电动 航天 火箭 卫星 太空 量子 "
-                "纳米 智能 家电 苹果 iPhone iPad Mac 安卓 Android 鸿蒙 Windows Linux 性能 跑分 续航 "
-                "参数 发布会 新品 配置 选购 实测 体验 对比 黑科技 掌机 Switch Steam 游戏本 NAS 打印机 "
-                "屏 墨水屏 电纸书 阅读器 寸 Hz 4K 2K 色域 亮度 刷新率 骁龙 天玑 显存 降噪 电源 充电器 氮化镓 "
-                "数据线 接口 USB Type-C PD 硬件 拆机 改装 DIY 上手 新机 3D打印 激光 模拟器 固件 算力",
-        "考古": "考古 文物 遗址 古墓 墓葬 出土 发掘 博物馆 历史 古代 王朝 朝代 青铜 甲骨 遗迹 古城 文明 "
-                "史前 新石器 旧石器 良渚 三星堆 殷墟 二里头 兵马俑 秦始皇 马王堆 古籍 碑刻 壁画 国宝 遗产 "
-                "商朝 周朝 夏朝 秦朝 汉代 汉朝 唐朝 宋朝 元朝 明朝 清朝 春秋 战国 三国 魏晋 帝王 皇帝 "
-                "陵墓 古人 文字 古文字 陶器 玉器 瓷器 丝绸之路",
-    },
-    "domestic_words": "国产 国货 华为 HUAWEI 鸿蒙 麒麟 小米 Xiaomi 红米 Redmi 澎湃 OPPO 一加 OnePlus vivo "
-                      "iQOO 荣耀 HONOR 真我 realme 魅族 努比亚 红魔 中兴 ZTE 传音 联想 Lenovo 拯救者 机械革命 "
-                      "雷神 神舟 七彩虹 铭瑄 影驰 大疆 DJI 影石 Insta360 漫步者 绿联 安克 Anker 倍思 酷态科 "
-                      "公牛 摩尔线程 龙芯 兆芯 海光 寒武纪 昇腾 中芯 长江存储 致态 长鑫 比亚迪 蔚来 小鹏 "
-                      "理想汽车 问界 极氪 零跑 吉利 长城汽车 奇瑞 领克 智己 小米汽车 SU7 YU7 宁德时代 海尔 美的 "
-                      "格力 TCL 海信 创维 长虹 追觅 科沃斯 石头科技 云鲸 九号 极米 当贝 坚果投影 宇树 优必选 智元",
-    "jianbao_words": "鉴宝 鉴定 古董 古玩 收藏品 藏品 捡漏 文玩 拍卖 估价 值多少钱 值钱 真假 赝品 仿品 "
-                     "开门老 老物件 盘玩 银元 钱币 古钱币 寻宝 鬼市 潘家园 和田玉 翡翠 包浆 宝贝",
+    "domestic_list": "guochan",  # 规则 2 用的词表
+    "jianbao_list": "jianbao",   # 规则 3 用的词表
+    "related": {"科技": ["keji"], "考古": ["kaogu"]},  # 规则 1：每个一级类别，哪些词表算「相关」
+    "word_lists": [
+        {"id": "keji", "name": "科技相关词", "words":
+            "科技 数码 评测 测评 开箱 拆解 芯片 处理器 CPU GPU 显卡 电脑 笔记本 主机 装机 手机 平板 "
+            "相机 镜头 耳机 音箱 音频 屏幕 显示器 电视 投影 电池 充电 快充 充电宝 无线 蓝牙 WiFi 5G 路由器 "
+            "硬盘 SSD 内存 主板 机箱 散热 键盘 鼠标 手表 手环 眼镜 VR AR AI 人工智能 大模型 机器人 "
+            "自动化 编程 代码 程序 软件 系统 硬件 电子 半导体 新能源 电动 航天 火箭 卫星 太空 量子 "
+            "纳米 智能 家电 苹果 iPhone iPad Mac 安卓 Android 鸿蒙 Windows Linux 性能 跑分 续航 "
+            "参数 发布会 新品 配置 选购 实测 体验 对比 黑科技 掌机 Switch Steam 游戏本 NAS 打印机 "
+            "屏 墨水屏 电纸书 阅读器 寸 Hz 4K 2K 色域 亮度 刷新率 骁龙 天玑 显存 降噪 电源 充电器 氮化镓 "
+            "数据线 接口 USB Type-C PD 硬件 拆机 改装 DIY 上手 新机 3D打印 激光 模拟器 固件 算力"},
+        {"id": "kaogu", "name": "考古相关词", "words":
+            "考古 文物 遗址 古墓 墓葬 出土 发掘 博物馆 历史 古代 王朝 朝代 青铜 甲骨 遗迹 古城 文明 "
+            "史前 新石器 旧石器 良渚 三星堆 殷墟 二里头 兵马俑 秦始皇 马王堆 古籍 碑刻 壁画 国宝 遗产 "
+            "商朝 周朝 夏朝 秦朝 汉代 汉朝 唐朝 宋朝 元朝 明朝 清朝 春秋 战国 三国 魏晋 帝王 皇帝 "
+            "陵墓 古人 文字 古文字 陶器 玉器 瓷器 丝绸之路"},
+        {"id": "guochan", "name": "国产品牌", "words":
+            "国产 国货 华为 HUAWEI 鸿蒙 麒麟 小米 Xiaomi 红米 Redmi 澎湃 OPPO 一加 OnePlus vivo "
+            "iQOO 荣耀 HONOR 真我 realme 魅族 努比亚 红魔 中兴 ZTE 传音 联想 Lenovo 拯救者 机械革命 "
+            "雷神 神舟 七彩虹 铭瑄 影驰 大疆 DJI 影石 Insta360 漫步者 绿联 安克 Anker 倍思 酷态科 "
+            "公牛 摩尔线程 龙芯 兆芯 海光 寒武纪 昇腾 中芯 长江存储 致态 长鑫 比亚迪 蔚来 小鹏 "
+            "理想汽车 问界 极氪 零跑 吉利 长城汽车 奇瑞 领克 智己 小米汽车 SU7 YU7 宁德时代 海尔 美的 "
+            "格力 TCL 海信 创维 长虹 追觅 科沃斯 石头科技 云鲸 九号 极米 当贝 坚果投影 宇树 优必选 智元"},
+        {"id": "jianbao", "name": "鉴宝", "words":
+            "鉴宝 鉴定 古董 古玩 收藏品 藏品 捡漏 文玩 拍卖 估价 值多少钱 值钱 真假 赝品 仿品 "
+            "开门老 老物件 盘玩 银元 钱币 古钱币 寻宝 鬼市 潘家园 和田玉 翡翠 包浆 宝贝"},
+    ],
 }
 
 SCHEMA = """
@@ -137,15 +150,41 @@ class Reviewer:
             store.db.commit()
 
     # ---------- 规则 ----------
+    @staticmethod
+    def normalize(saved):
+        """旧格式（词直接写在规则里：related_words / domestic_words / jianbao_words / 自定义规则的 words）
+        转成词库格式。新格式原样返回。"""
+        s = copy.deepcopy(saved)
+        old_related = s.pop("related_words", None)
+        old_dom, old_jb = s.pop("domestic_words", None), s.pop("jianbao_words", None)
+        if "word_lists" not in s:
+            lists = {wl["id"]: wl for wl in copy.deepcopy(DEFAULT_RULES["word_lists"])}
+            related = copy.deepcopy(DEFAULT_RULES["related"])
+            if old_dom is not None:
+                lists["guochan"]["words"] = old_dom
+            if old_jb is not None:
+                lists["jianbao"]["words"] = old_jb
+            for top, ws in (old_related or {}).items():
+                lid = (related.get(top) or [None])[0]
+                if lid in lists:
+                    lists[lid]["words"] = ws
+                elif words(ws):
+                    lid = uuid.uuid4().hex[:6]
+                    lists[lid] = {"id": lid, "name": f"{top}相关词", "words": ws}
+                    related[top] = [lid]
+            s["word_lists"] = list(lists.values())
+            s.setdefault("related", related)
+        for c in s.get("custom_rules", []):
+            c.setdefault("lists", [])
+        return s
+
     def rules(self):
-        r = json.loads(json.dumps(DEFAULT_RULES))
+        r = copy.deepcopy(DEFAULT_RULES)
         if os.path.exists(self.rules_path):
             with open(self.rules_path, encoding="utf-8") as f:
-                saved = json.load(f)
-            r.update({k: v for k, v in saved.items() if k != "related_words"})
-            r["related_words"].update(saved.get("related_words", {}))
+                r.update(self.normalize(json.load(f)))
         for top in self.top_categories():
-            r["related_words"].setdefault(top, "")
+            r["related"].setdefault(top, [])
         return r
 
     def save_rules(self, r):
@@ -156,28 +195,49 @@ class Reviewer:
             clean[k] = int(clean[k])
         for k in ("unrelated_on", "domestic_on", "jianbao_on", "fans_on", "min_videos_on"):
             clean[k] = bool(clean.get(k, True))
+
+        lists, names = [], set()
+        for wl in r.get("word_lists", []):
+            name = (wl.get("name") or "").strip()
+            if not name:
+                raise ValueError("有个词表没有名字")
+            if name in names:
+                raise ValueError(f"词表「{name}」重名了")
+            names.add(name)
+            lid = str(wl.get("id") or "")
+            lists.append({"id": lid if re.fullmatch(r"[\w-]{1,32}", lid) else uuid.uuid4().hex[:6],
+                          "name": name, "words": " ".join(words(wl.get("words")))})
+        ids = {wl["id"]: wl["name"] for wl in lists}
+        clean["word_lists"] = lists
+        clean["related"] = {top: [i for i in v if i in ids] for top, v in (r.get("related") or {}).items()}
+        for k, no in (("domestic_list", 2), ("jianbao_list", 3)):
+            if clean.get(k) and clean[k] not in ids:
+                raise ValueError(f"规则 {no} 用的词表已经不存在了，请重新选一个")
+
         customs = []
         for c in r.get("custom_rules", []):
             if c.get("type") not in RULE_TYPES:
                 raise ValueError(f"未知的规则类型：{c.get('type')}")
             if c["type"] == "number" and c.get("field") not in NUMBER_FIELDS:
                 raise ValueError(f"未知的数值字段：{c.get('field')}")
-            if c["type"] != "number" and not words(c.get("words")):
-                raise ValueError(f"规则「{c.get('label') or '未命名'}」没有填词")
+            label = (c.get("label") or "").strip() or "自定义规则"
+            sel = [i for i in c.get("lists") or [] if i in ids]
+            if c["type"] != "number" and not sel and not words(c.get("words")):
+                raise ValueError(f"规则「{label}」还没选词表，也没有另加词")
             customs.append({
                 "id": c.get("id") or uuid.uuid4().hex[:6],
                 "enabled": bool(c.get("enabled", True)),
-                "label": (c.get("label") or "").strip() or "自定义规则",
+                "label": label,
                 "type": c["type"],
                 "scope": c.get("scope", ""),
-                "words": c.get("words", ""),
+                "lists": sel if c["type"] != "number" else [],
+                "words": " ".join(words(c.get("words"))) if c["type"] != "number" else "",
                 "op": ">" if c.get("op", ">") == ">" else "<",
                 "value": float(c.get("value") or 0),
                 "field": c.get("field", "fans"),
             })
         clean["custom_rules"] = customs
-        with open(self.rules_path, "w", encoding="utf-8") as f:
-            json.dump(clean, f, ensure_ascii=False, indent=2)
+        userdata.save_json(self.rules_path, clean, "筛选规则")
 
     def top_categories(self):
         return [n["name"] for n in self.categories.tree]
@@ -198,13 +258,18 @@ class Reviewer:
         return out
 
     def _matchers(self, r):
+        lists = {wl["id"]: words(wl["words"]) for wl in r["word_lists"]}
+
+        def pick(ids, extra=""):
+            return {w for i in ids for w in lists.get(i, [])} | set(words(extra))
+        dom_words = pick([r["domestic_list"]])
         # 讲国产品牌的视频本身也属于科技内容，所以国产品牌词也算「相关」
-        related = {top: Matcher(self.tree_words(top) | set(words(ws))
-                                | (set(words(r["domestic_words"])) if top == r["domestic_scope"] else set()))
-                   for top, ws in r["related_words"].items()}
-        custom = {c["id"]: Matcher(words(c["words"])) for c in r["custom_rules"]
+        related = {top: Matcher(self.tree_words(top) | pick(ids)
+                                | (dom_words if top == r["domestic_scope"] else set()))
+                   for top, ids in r["related"].items()}
+        custom = {c["id"]: Matcher(pick(c["lists"], c["words"])) for c in r["custom_rules"]
                   if c["enabled"] and c["type"] in ("title_ratio", "name_contains")}
-        return related, Matcher(words(r["domestic_words"])), Matcher(words(r["jianbao_words"])), custom
+        return related, Matcher(dom_words), Matcher(pick([r["jianbao_list"]])), custom
 
     # ---------- 自动判断 ----------
     def _channel_cats(self):

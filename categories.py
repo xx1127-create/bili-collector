@@ -1,7 +1,9 @@
-"""类别树：最多 4 级，每个节点有自己的搜索关键词。保存在 categories.json。"""
+"""类别树：最多 4 级，每个节点有自己的搜索关键词。保存在 data/categories.json（每次修改前自动备份）。"""
 import json
 import os
 import uuid
+
+import userdata
 
 MAX_DEPTH = 4
 
@@ -53,8 +55,7 @@ class Categories:
             self.save()
 
     def save(self):
-        with open(self.path, "w", encoding="utf-8") as f:
-            json.dump(self.tree, f, ensure_ascii=False, indent=2)
+        userdata.save_json(self.path, self.tree, "类别结构")
 
     def set_tree(self, tree):
         def check(nodes, depth):

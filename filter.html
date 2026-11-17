@@ -45,11 +45,23 @@
   .custom { border:1px dashed var(--line); border-radius:8px; padding:4px; display:flex; flex-direction:column; gap:2px; }
   .examples { color:var(--muted); font-size:12px; margin:6px 0 0 4px; }
   .examples code { background:#f4f4f5; padding:0 4px; border-radius:3px; }
-  details.words-box { margin-top:10px; }
-  details.words-box summary { cursor:pointer; color:var(--muted); font-size:13px; }
-  .wordlists { display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:12px; margin-top:10px; }
-  .wordlists label { display:block; font-weight:500; margin-bottom:4px; }
-  .wordlists textarea { width:100%; height:96px; resize:vertical; font-size:12px; line-height:1.6; }
+  .sub { margin:0 0 4px 54px; font-size:12px; color:var(--muted); display:flex; flex-direction:column; gap:4px; }
+  .sub .rel { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .sub .rel b { color:var(--text); font-weight:500; min-width:48px; }
+  .picker { display:inline-flex; align-items:center; gap:4px; flex-wrap:wrap; }
+  .chip { background:#eef6fb; color:#0b6e99; border:1px solid #cfe8f5; border-radius:12px; padding:0 4px 0 9px; font-size:12px; white-space:nowrap; }
+  .chip b { cursor:pointer; padding:0 4px; color:#7aa7bd; font-weight:normal; }
+  .chip b:hover { color:var(--bad); }
+  .picker select, select.listsel { color:var(--blue); }
+  .rule input.extra { width:150px; }
+  .wordlists { display:grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap:12px; }
+  .wl { border:1px solid var(--line); border-radius:8px; padding:8px 10px; display:flex; flex-direction:column; gap:6px; }
+  .wl.flash { border-color:var(--pink); box-shadow:0 0 0 3px #fff0f4; }
+  .wl-head { display:flex; align-items:center; gap:6px; }
+  .wl-head input { width:130px; font-weight:600; }
+  .wl-head .hint { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .wl textarea { width:100%; height:84px; resize:vertical; font-size:12px; line-height:1.6; }
+  .msg.dirty { color:var(--wait); }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:14px; }
   .msg { color:var(--muted); font-size:13px; }
 
@@ -118,10 +130,6 @@
 
     <h3>内置规则</h3>
     <div id="builtin"></div>
-    <details class="words-box">
-      <summary>词表（规则 ①②③ 用）</summary>
-      <div class="wordlists" id="wordlists"></div>
-    </details>
 
     <h3>自定义规则 <span class="hint">满足条件的频道 → 筛掉</span>
       <button class="mini" onclick="addRule('title_ratio')">＋ 标题占比规则</button>
@@ -130,14 +138,19 @@
     </h3>
     <div class="custom" id="custom"></div>
     <div class="examples">
-      例子：<code>科技频道里，标题含「游戏 原神 王者荣耀」的视频超过 30%</code>
-      <code>频道名含「官方 旗舰店 客服」</code>　<code>停更天数大于 365</code>　<code>视频总数小于 20</code>
-      <code>考古频道里，标题含「考古 文物 遗址」的视频低于 40%</code>
+      例子：<code>美食 类频道，标题含【美食】词表里的词的视频 低于 40%</code>
+      <code>科技 类频道，标题含【游戏】词表里的词的视频 超过 30%</code>
+      <code>全部类别 频道名含【官方号】词表里的词</code>　<code>停更天数大于 365</code>
     </div>
+
+    <h3>词库 <span class="hint">规则里用到的词都放在这里，一个主题一个词表。规则里点「＋ 选词表」选用，也可以在那里直接新建</span>
+      <button class="mini" onclick="newListHere()">＋ 新建词表</button>
+    </h3>
+    <div class="wordlists" id="lib"></div>
 
     <div class="row">
       <button class="primary" onclick="saveAndRun()">保存规则并重新筛选</button>
-      <span class="msg" id="rulesMsg">词之间用空格或逗号隔开，英文不分大小写。</span>
+      <span class="msg" id="rulesMsg">词之间用空格、逗号或换行隔开，英文不分大小写。</span>
     </div>
   </details>
 
@@ -197,15 +210,31 @@ async function api(method, url, body) {
 let rules = null, tops = [], view = '通过', manualOnly = false, cur = null, detail = null, dView = 'all';
 
 // ---------- 规则 ----------
+// 页面上的规则先改在 rules 里，点「保存」才写到服务器。结构性改动（新建/删除词表、选词表、加删规则）
+// 都是：先把页面上的输入收回 rules（collect），改 rules，再整体重画（renderRules），这样不会丢掉没保存的输入。
 const scopeSel = (val, cls = 'scope') => `<select class="${cls}"><option value="">全部类别</option>${tops.map(t => `<option ${t === val ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
 const onBox = k => `<input type="checkbox" data-on="${k}" ${rules[k] ? 'checked' : ''}>`;
+const listName = id => (rules.word_lists.find(l => l.id === id) || {}).name;
+const wordCount = s => (s || '').split(/[\s,，、;；]+/).filter(Boolean).length;
+const NEW = '__new';
+
+function picker(key, ids) {  // 多选词表：已选的显示成小标签，下拉框里选更多或新建
+  ids = ids.filter(listName);
+  const rest = rules.word_lists.filter(l => !ids.includes(l.id));
+  return `<span class="picker" data-key="${esc(key)}" data-ids="${esc(ids.join(','))}">` +
+    ids.map(id => `<span class="chip">${esc(listName(id))}<b data-x="${esc(id)}" title="不用这个词表">×</b></span>`).join('') +
+    `<select class="pick"><option value="">＋ 选词表</option>${rest.map(l => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join('')}<option value="${NEW}">＋ 新建词表…</option></select></span>`;
+}
+const listSel = (id, val) => `<select class="listsel" id="${id}">${rules.word_lists.map(l => `<option value="${esc(l.id)}" ${l.id === val ? 'selected' : ''}>【${esc(l.name)}】</option>`).join('')}<option value="${NEW}">＋ 新建词表…</option></select>`;
 
 function renderBuiltin() {
   const topSel = (k) => `<select id="${k}">${tops.map(t => `<option ${t === rules[k] ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
   $('builtin').innerHTML = `
     <div class="rule">${onBox('unrelated_on')}<span class="no">1</span>跟所属类别无关的视频超过 <input type="number" id="unrelated_max" step="0.1" value="${rules.unrelated_max}"> % <span class="act">→ 筛掉</span></div>
-    <div class="rule">${onBox('domestic_on')}<span class="no">2</span>${topSel('domestic_scope')} 类频道，国产品牌视频超过 <input type="number" id="domestic_max" step="0.1" value="${rules.domestic_max}"> % <span class="act">→ 筛掉</span></div>
-    <div class="rule">${onBox('jianbao_on')}<span class="no">3</span>${topSel('jianbao_scope')} 类频道，鉴宝视频超过 <input type="number" id="jianbao_max" step="0.1" value="${rules.jianbao_max}"> % <span class="act">→ 筛掉</span></div>
+    <div class="sub"><span>标题含下面词表里的词就算「相关」。类别树里的类别名和关键词自动算相关，不用另加。</span>
+      ${tops.map(t => `<div class="rel"><b>${esc(t)}</b>${picker('related:' + t, rules.related[t] || [])}</div>`).join('')}</div>
+    <div class="rule">${onBox('domestic_on')}<span class="no">2</span>${topSel('domestic_scope')} 类频道，标题含 ${listSel('domestic_list', rules.domestic_list)} 里的词的视频超过 <input type="number" id="domestic_max" step="0.1" value="${rules.domestic_max}"> % <span class="act">→ 筛掉</span></div>
+    <div class="rule">${onBox('jianbao_on')}<span class="no">3</span>${topSel('jianbao_scope')} 类频道，标题含 ${listSel('jianbao_list', rules.jianbao_list)} 里的词的视频超过 <input type="number" id="jianbao_max" step="0.1" value="${rules.jianbao_max}"> % <span class="act">→ 筛掉</span></div>
     <div class="rule">${onBox('fans_on')}<span class="no">4</span>粉丝数超过 <input type="number" id="fans_max" class="wide" step="10000" value="${rules.fans_max}"> <span class="hint" id="fansHint"></span> <span class="act">→ 筛掉</span></div>
     <div class="rule">${onBox('min_videos_on')}<span class="no">5</span>已抓到的视频少于 <input type="number" id="min_videos" value="${rules.min_videos}"> 个 <span class="act wait">→ 待定</span><span class="hint">（频道视频太少，先不判断；停用后视频再少也照样判断）</span></div>
     <div class="rule"><span class="no">·</span><span class="hint">固定规则：只有展开并抓全的频道才参加筛选；没抓全的频道不入选也不筛掉，下次采集会继续展开。</span></div>`;
@@ -214,67 +243,148 @@ function renderBuiltin() {
   $('fans_max').oninput();
 }
 
-function ruleRow(c) {
+function ruleRow(c, i) {
   const opSel = (ops) => `<select class="op">${ops.map(([v, t]) => `<option value="${v}" ${c.op === v ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
+  const extra = `<input class="words extra" value="${esc(c.words)}" placeholder="另加词（可不填）" title="不想建词表时，也可以直接在这里写几个词">`;
   let body;
-  if (c.type === 'title_ratio') body = `${scopeSel(c.scope)} 类频道，标题含 <input class="words" value="${esc(c.words)}" placeholder="词，用空格隔开"> 的视频 ${opSel([['>', '超过'], ['<', '低于']])} <input type="number" class="value" step="0.1" value="${c.value}"> %`;
-  else if (c.type === 'name_contains') body = `${scopeSel(c.scope)} 类频道，频道名含 <input class="words" value="${esc(c.words)}" placeholder="词，用空格隔开">`;
+  if (c.type === 'title_ratio') body = `${scopeSel(c.scope)} 类频道，标题含 ${picker('custom:' + i, c.lists || [])} ${extra} 里的词的视频 ${opSel([['>', '超过'], ['<', '低于']])} <input type="number" class="value" step="0.1" value="${c.value}"> %`;
+  else if (c.type === 'name_contains') body = `${scopeSel(c.scope)} 类频道，频道名含 ${picker('custom:' + i, c.lists || [])} ${extra} 里的词`;
   else body = `${scopeSel(c.scope)} 类频道，<select class="field">${Object.entries(FIELDS).map(([k, t]) => `<option value="${k}" ${c.field === k ? 'selected' : ''}>${t}</option>`).join('')}</select> ${opSel([['>', '大于'], ['<', '小于']])} <input type="number" class="value wide" value="${c.value}">`;
   return `<div class="rule ${c.enabled ? '' : 'off'}" data-id="${esc(c.id || '')}" data-type="${c.type}">
     <input type="checkbox" class="enabled" ${c.enabled ? 'checked' : ''}>
     <input class="label" value="${esc(c.label)}" placeholder="规则名称（会写进筛掉原因）">
     ${body} <span class="act">→ 筛掉</span>
-    <button class="mini bad" onclick="this.closest('.rule').remove(); emptyHint()">删除</button></div>`;
+    <button class="mini bad" data-del="${i}">删除</button></div>`;
 }
 function renderCustom() {
-  $('custom').innerHTML = rules.custom_rules.map(ruleRow).join('');
+  $('custom').innerHTML = rules.custom_rules.length ? rules.custom_rules.map(ruleRow).join('')
+    : '<div class="msg" style="padding:8px">还没有自定义规则，点上面的按钮添加。</div>';
   $('custom').querySelectorAll('.enabled').forEach(b => b.onchange = () => b.closest('.rule').classList.toggle('off', !b.checked));
-  emptyHint();
 }
-function emptyHint() {
-  if (!$('custom').querySelector('.rule')) $('custom').innerHTML = '<div class="msg" style="padding:8px">还没有自定义规则，点上面的按钮添加。</div>';
+
+function usage(id) {  // 这个词表被哪些规则用到
+  const u = [];
+  for (const [t, ids] of Object.entries(rules.related)) if (tops.includes(t) && ids.includes(id)) u.push(`规则1·${t}`);
+  if (rules.domestic_list === id) u.push('规则2');
+  if (rules.jianbao_list === id) u.push('规则3');
+  for (const c of rules.custom_rules) if ((c.lists || []).includes(id)) u.push(`「${c.label || '未命名规则'}」`);
+  return u;
 }
-function addRule(type) {
-  const defaults = {title_ratio: {label: '', words: '', op: '>', value: 30},
-                    name_contains: {label: '', words: ''}, number: {label: '', field: 'days_since_update', op: '>', value: 365}};
-  const c = {type, enabled: true, scope: '', ...defaults[type]};
-  if (!$('custom').querySelector('.rule')) $('custom').innerHTML = '';
-  $('custom').insertAdjacentHTML('beforeend', ruleRow(c));
-  const row = $('custom').lastElementChild;
-  row.querySelector('.enabled').onchange = e => row.classList.toggle('off', !e.target.checked);
-  row.querySelector('.label').focus();
+function renderLib() {
+  $('lib').innerHTML = rules.word_lists.map(l => {
+    const u = usage(l.id);
+    return `<div class="wl" data-id="${esc(l.id)}">
+      <div class="wl-head"><input class="wl-name" value="${esc(l.name)}" title="词表名字，可以改">
+        <span class="hint" title="${esc(u.join('、'))}"><span class="cnt">${wordCount(l.words)}</span> 个词 · ${u.length ? '用在 ' + esc(u.join('、')) : '还没有规则用它'}</span>
+        <button class="mini bad" data-dellist="${esc(l.id)}">删除</button></div>
+      <textarea placeholder="在这里填词，用空格、逗号或换行隔开。例如：美食 探店 做饭 菜谱 烘焙 小吃">${esc(l.words)}</textarea></div>`;
+  }).join('') || '<div class="msg">词库是空的，点「＋ 新建词表」添加。</div>';
+  $('lib').querySelectorAll('.wl').forEach(w => w.querySelector('textarea').oninput = e => w.querySelector('.cnt').textContent = wordCount(e.target.value));
 }
+function renderRules() { renderBuiltin(); renderCustom(); renderLib(); }
+
+function pickerIds(el) { return el.dataset.ids ? el.dataset.ids.split(',') : []; }
 function readCustom() {
   return [...$('custom').querySelectorAll('.rule')].map(row => {
     const g = s => row.querySelector(s);
     return {id: row.dataset.id || undefined, type: row.dataset.type, enabled: g('.enabled').checked,
       label: g('.label').value.trim(), scope: g('.scope').value, words: g('.words')?.value || '',
+      lists: g('.picker') ? pickerIds(g('.picker')) : [],
       op: g('.op')?.value || '>', value: +(g('.value')?.value || 0), field: g('.field')?.value || 'fans'};
   });
 }
-
-async function loadRules() {
-  rules = await api('GET', '/api/filter/rules');
-  tops = Object.keys(rules.related_words);
-  renderBuiltin();
-  $('wordlists').innerHTML =
-    tops.map(t => `<div><label>「${esc(t)}」相关词 <span class="hint">规则①：标题含任一词 = 相关；类别树里的类别名和关键词也自动算相关</span></label>
-      <textarea data-top="${esc(t)}">${esc(rules.related_words[t])}</textarea></div>`).join('') +
-    `<div><label>国产品牌词 <span class="hint">规则②</span></label><textarea id="domestic_words">${esc(rules.domestic_words)}</textarea></div>
-     <div><label>鉴宝词 <span class="hint">规则③</span></label><textarea id="jianbao_words">${esc(rules.jianbao_words)}</textarea></div>`;
-  renderCustom();
-}
-
-async function saveAndRun() {
-  const r = {related_words: {}, custom_rules: readCustom()};
+function collect() {  // 页面上的输入 → rules
+  const r = {...rules, related: {...rules.related}};
   for (const k of ['unrelated_max', 'domestic_max', 'jianbao_max', 'fans_max', 'min_videos']) r[k] = +$(k).value;
   $('builtin').querySelectorAll('[data-on]').forEach(b => r[b.dataset.on] = b.checked);
   r.domestic_scope = $('domestic_scope').value; r.jianbao_scope = $('jianbao_scope').value;
-  r.domestic_words = $('domestic_words').value; r.jianbao_words = $('jianbao_words').value;
-  document.querySelectorAll('#wordlists textarea[data-top]').forEach(t => r.related_words[t.dataset.top] = t.value);
+  r.domestic_list = $('domestic_list').value; r.jianbao_list = $('jianbao_list').value;
+  $('builtin').querySelectorAll('.picker').forEach(p => r.related[p.dataset.key.slice('related:'.length)] = pickerIds(p));
+  r.custom_rules = readCustom();
+  r.word_lists = [...$('lib').querySelectorAll('.wl')].map(w => ({id: w.dataset.id, name: w.querySelector('.wl-name').value.trim(), words: w.querySelector('textarea').value}));
+  return r;
+}
+function setIds(key, fn) {  // 改某个选词表位置的词表
+  if (key.startsWith('related:')) { const t = key.slice(8); rules.related[t] = fn(rules.related[t] || []); }
+  else { const c = rules.custom_rules[+key.slice(7)]; c.lists = fn(c.lists || []); }
+}
+function newList() {  // 新建词表，返回 id；取消返回 null
+  const name = (prompt('新词表的名字（例如：美食）') || '').trim();
+  if (!name) return null;
+  if (rules.word_lists.some(l => l.name === name)) { alert(`已经有叫「${name}」的词表了`); return null; }
+  const id = 'w' + Math.random().toString(16).slice(2, 8);
+  rules.word_lists.push({id, name, words: ''});
+  return id;
+}
+function focusList(id) {
+  const w = $('lib').querySelector(`.wl[data-id="${id}"]`);
+  if (!w) return;
+  w.classList.add('flash'); setTimeout(() => w.classList.remove('flash'), 2500);
+  w.scrollIntoView({behavior: 'smooth', block: 'center'});
+  w.querySelector('textarea').focus();
+}
+function dirty() { $('rulesMsg').textContent = '有修改还没保存，改完点「保存规则并重新筛选」。'; $('rulesMsg').classList.add('dirty'); }
+function newListHere() { rules = collect(); const id = newList(); if (id) { renderRules(); dirty(); focusList(id); } }
+function addRule(type) {
+  const defaults = {title_ratio: {label: '', words: '', lists: [], op: '>', value: 30},
+                    name_contains: {label: '', words: '', lists: []}, number: {label: '', field: 'days_since_update', op: '>', value: 365}};
+  rules = collect();
+  rules.custom_rules.push({type, enabled: true, scope: '', ...defaults[type]});
+  renderRules(); dirty();
+  $('custom').lastElementChild.querySelector('.label').focus();
+}
+
+// 规则区里的点击和选择（事件委托）
+$('rulesCard').addEventListener('click', e => {
+  const x = e.target.dataset.x, del = e.target.dataset.del, dl = e.target.dataset.dellist;
+  if (x) {
+    const key = e.target.closest('.picker').dataset.key;
+    rules = collect(); setIds(key, ids => ids.filter(i => i !== x)); renderRules(); dirty();
+  } else if (del != null) {
+    rules = collect(); rules.custom_rules.splice(+del, 1); renderRules(); dirty();
+  } else if (dl) {
+    rules = collect();
+    const name = listName(dl), u = usage(dl);
+    if (rules.domestic_list === dl || rules.jianbao_list === dl) return alert(`规则${rules.domestic_list === dl ? 2 : 3}正在用「${name}」，请先在那条规则里换一个词表，再删除。`);
+    if (!confirm(u.length ? `「${name}」正用在 ${u.join('、')}。\n删除后，这些规则里也会去掉它。确定删除？` : `删除词表「${name}」？`)) return;
+    rules.word_lists = rules.word_lists.filter(l => l.id !== dl);
+    for (const t in rules.related) rules.related[t] = rules.related[t].filter(i => i !== dl);
+    rules.custom_rules.forEach(c => c.lists = (c.lists || []).filter(i => i !== dl));
+    renderRules(); dirty();
+  }
+});
+$('rulesCard').addEventListener('change', e => {
+  const t = e.target;
+  if (t.classList.contains('pick') && t.value) {
+    const key = t.closest('.picker').dataset.key, v = t.value;
+    rules = collect();
+    const id = v === NEW ? newList() : v;
+    if (id) setIds(key, ids => [...ids, id]);
+    renderRules(); dirty();
+    if (id && v === NEW) focusList(id);
+  } else if (t.classList.contains('listsel') && t.value === NEW) {
+    rules = collect();
+    const id = newList();
+    if (id) rules[t.id] = id;
+    renderRules(); dirty();
+    if (id) focusList(id);
+  } else if (t.classList.contains('wl-name')) {
+    rules = collect(); renderRules(); dirty();  // 改名后各处标签跟着变
+  } else dirty();
+});
+$('rulesCard').addEventListener('input', e => { if (e.target.matches('input, textarea')) dirty(); });
+
+async function loadRules() {
+  rules = await api('GET', '/api/filter/rules');
+  tops = rules.tops;
+  renderRules();
+}
+
+async function saveAndRun() {
   try {
-    await api('PUT', '/api/filter/rules', r);
+    await api('PUT', '/api/filter/rules', collect());
     await loadRules(); await runOnly();
+    $('rulesMsg').classList.remove('dirty');
     $('rulesMsg').textContent = '已保存并重新筛选 ✓（手动改判过的频道不受影响）';
   } catch (e) { alert(e.message); }
 }

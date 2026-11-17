@@ -1,6 +1,11 @@
-# 本地数据：登录 Cookie、数据库、导出结果，不上传
+# 本地数据：类别结构、筛选规则、登录 Cookie、数据库、导出结果，不上传
 data/
 output/
+
+# 旧版放在程序目录里的设置文件（新版启动时自动搬进 data/）；ZIP 更新记录的版本号
+/categories.json
+/filter_rules.json
+version.json
 
 # 启动时自动创建的 Python 运行环境
 .venv/

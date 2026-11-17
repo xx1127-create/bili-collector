@@ -111,6 +111,15 @@ AI_PROMPT = """你是 B 站频道审核员。下面是按规则初筛后「入�
 """
 
 
+def _rule_words(r, c):
+    """规则用到的词：所选词表（连同里面的词）和另加的词"""
+    lists = {wl["id"]: wl for wl in r.get("word_lists", [])}
+    parts = [f"【{lists[i]['name']}】词表（{lists[i]['words']}）" for i in c.get("lists", []) if i in lists]
+    if c.get("words"):
+        parts.append(f"「{c['words']}」")
+    return " 或 ".join(parts)
+
+
 def rule_summary(r):
     """把启用的规则写成一句句人话"""
     out = []
@@ -129,9 +138,9 @@ def rule_summary(r):
         scope = f"{c['scope']}类频道" if c["scope"] else "所有频道"
         op = {">": "超过", "<": "低于"}[c["op"]]
         if c["type"] == "title_ratio":
-            out.append(f"{c['label']}：{scope}标题含「{c['words']}」的视频{op} {c['value']}% 则筛掉")
+            out.append(f"{c['label']}：{scope}标题含 {_rule_words(r, c)} 里的词的视频{op} {c['value']}% 则筛掉")
         elif c["type"] == "name_contains":
-            out.append(f"{c['label']}：{scope}频道名含「{c['words']}」则筛掉")
+            out.append(f"{c['label']}：{scope}频道名含 {_rule_words(r, c)} 里的词则筛掉")
         else:
             out.append(f"{c['label']}：{scope}{fields[c['field']]}{op} {c['value']:g} 则筛掉")
     return out or ["（没有启用任何规则）"]
