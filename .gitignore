@@ -2,10 +2,9 @@
 data/
 output/
 
-# 旧版放在程序目录里的设置文件（新版启动时自动搬进 data/）；ZIP 更新记录的版本号
+# 旧版放在程序目录里的设置文件（新版启动时自动搬进 data/）
 /categories.json
 /filter_rules.json
-version.json
 
 # 启动时自动创建的 Python 运行环境
 .venv/

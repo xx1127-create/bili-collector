@@ -6,14 +6,26 @@ set PORT=8765
 set VENV=.venv
 set MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple
 
-curl -s -o nul http://127.0.0.1:%PORT%/ && (
+if not "%~1"=="--setup-only" curl -s -o nul http://127.0.0.1:%PORT%/ && goto :running
+
+echo ① 检查 Python…
+call :running
+rem 端口已经被占：是这个文件夹里的采集器就直接打开页面；是别的文件夹里的（多半是还开着的旧版本）就提示先关掉
+set "HERE=%~dp0"
+set "HERE=%HERE:~0,-1%"
+set "RUNNING="
+for /f "usebackq delims=" %%p in (`curl -s http://127.0.0.1:%PORT%/api/whoami`) do if not defined RUNNING set "RUNNING=%%p"
+if /i "%RUNNING%"=="%HERE%" (
     echo 采集器已经在运行，直接打开页面。
     start "" http://127.0.0.1:%PORT%
     exit /b 0
 )
+echo 另一个文件夹里的采集器正在运行（刚下载了新版本的话，多半是还开着的旧版本），占用了端口 %PORT%。
+echo 请先关掉它的黑色窗口，再双击这里的「启动」。
+pause
+exit /b 1
 
-echo ① 检查 Python…
-call :find_python
+:find_python
 if not defined PY (
     echo    没找到 Python，用 winget 安装 Python 3.12…
     winget install -e --id Python.Python.3.12 --scope user --accept-source-agreements --accept-package-agreements

@@ -13,9 +13,17 @@ pause_exit() {
 }
 
 if [ "$1" != "--setup-only" ] && curl -s -o /dev/null "http://127.0.0.1:$PORT/"; then
-    echo "采集器已经在运行，直接打开页面。"
-    open "http://127.0.0.1:$PORT"
-    exit 0
+    RUNNING="$(curl -s "http://127.0.0.1:$PORT/api/whoami")"
+    if [ "$RUNNING" = "$(pwd -P)" ]; then
+        echo "采集器已经在运行，直接打开页面。"
+        open "http://127.0.0.1:$PORT"
+        exit 0
+    fi
+    # 端口被别的文件夹里的采集器占着（多半是还开着的旧版本），打开页面会看到旧版本
+    echo "另一个文件夹里的采集器正在运行（刚下载了新版本的话，多半是还开着的旧版本），占用了端口 $PORT："
+    case "$RUNNING" in /*) echo "   $RUNNING" ;; *) echo "   （旧版本，看不到它在哪个文件夹）" ;; esac
+    echo "请先关掉它的黑色终端窗口，再双击这里的「启动」。"
+    pause_exit
 fi
 
 # ---------- ① Python（3.8 以上） ----------

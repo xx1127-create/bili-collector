@@ -301,12 +301,96 @@ def open_backups():
     return _open_folder(userdata.backup_dir(CATS_FILE))
 
 
+@app.get("/api/whoami")
+def whoami():
+    """启动脚本用：看看占着端口的是不是这个文件夹里的采集器"""
+    return Response(os.path.realpath(BASE), mimetype="text/plain; charset=utf-8")
+
+
 @app.get("/api/update/check")
 def update_check():
+    auto = request.args.get("auto") == "1"  # 打开页面时的自动检查：用缓存，失败也不报错
     try:
-        return jsonify(updater.check())
+        return jsonify(updater.check(cached=auto))
     except Exception as e:
+        if auto:
+            return jsonify({})
         return jsonify(error=f"检查更新失败（可能是连不上 GitHub）：{e}"), 502
+
+
+@app.post("/api/update/zip")
+def update_zip():
+    """用下载好的程序 ZIP 更新。不带 apply=1 时只检查，返回更新包和现在的版本"""
+    data = request.get_data()
+    try:
+        _, _, ver = updater.inspect_zip(data)
+        if request.args.get("apply") != "1":
+            cur = updater.current()
+            return jsonify(package=ver, current=cur,
+                           older=bool(ver and cur and ver["date"] < cur["date"]))
+        if job.running:
+            return jsonify(error="正在采集，等采集结束或点「停止」后再更新"), 400
+        userdata.backup(CATS_FILE, "类别结构")
+        userdata.backup(RULES_FILE, "筛选规则")
+        n = updater.apply_zip(data)
+    except Exception as e:
+        return jsonify(error=f"更新失败：{e}"), 400
+    when = f"{ver['date']} 的版本" if ver else "更新包里的版本"
+    return jsonify(message=f"已更新到 {when}（{n} 个程序文件）")
+
+
+# ---------------- 从旧版本搬过来 ----------------
+@app.get("/api/old/scan")
+def old_scan():
+    if request.args.get("auto") == "1" and store.stats()["videos"]:
+        return jsonify(found=[])  # 自动提示只在这个版本还没有数据时才找
+    return jsonify(found=userdata.find_old(BASE))
+
+
+def choose_folder():
+    """弹出系统的选择文件夹窗口，返回选的路径；取消返回 None"""
+    prompt = "请选择旧版本的 B站视频采集器文件夹"
+    if sys.platform == "darwin":
+        r = subprocess.run(["osascript", "-e", f'POSIX path of (choose folder with prompt "{prompt}")'],
+                           capture_output=True, text=True, timeout=900)
+        return (r.stdout.strip().rstrip("/") or None) if r.returncode == 0 else None  # 点了取消时返回码不是 0
+    if sys.platform == "win32":
+        ps = ("Add-Type -AssemblyName System.Windows.Forms; [Console]::OutputEncoding = [Text.Encoding]::UTF8; "
+              "$d = New-Object System.Windows.Forms.FolderBrowserDialog; "
+              f"$d.Description = '{prompt}'; if ($d.ShowDialog() -eq 'OK') {{ $d.SelectedPath }}")
+        r = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", ps],
+                           capture_output=True, text=True, encoding="utf-8", timeout=900)
+        return r.stdout.strip() or None
+    raise RuntimeError("这个系统上没法弹出选择文件夹的窗口，请把旧版本的 data 文件夹手动复制过来")
+
+
+@app.post("/api/old/choose")
+def old_choose():
+    try:
+        d = choose_folder()
+    except Exception as e:
+        return jsonify(error=str(e)), 400
+    if not d:
+        return jsonify(cancelled=True)
+    # 选成了 data 文件夹，或者选了套着程序文件夹的外层文件夹，都帮着找一下
+    cands = [d, os.path.dirname(d)] + [os.path.join(d, e) for e in sorted(os.listdir(d))
+                                         if os.path.isdir(os.path.join(d, e))]
+    found = next((c for c in cands if userdata.is_install(c)), None)
+    if not found:
+        return jsonify(error=f"「{d}」里没有找到采集器的设置或数据（应该有 app.py，以及 categories.json 或 data 文件夹）"), 400
+    return jsonify(info=userdata.describe(found))
+
+
+@app.post("/api/old/migrate")
+def old_migrate():
+    if job.running:
+        return jsonify(error="正在采集，等采集结束或点「停止」后再搬"), 400
+    try:
+        done = userdata.migrate_from(request.get_json()["path"], store, cats, reviewer, job, DATA)
+    except (KeyError, ValueError, TypeError, OSError) as e:
+        return jsonify(error=f"搬的时候出错了：{e}"), 400
+    reviewer.run()
+    return jsonify(done=done)
 
 
 @app.post("/api/update")

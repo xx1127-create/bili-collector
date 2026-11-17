@@ -141,6 +141,10 @@ class Reviewer:
         self.store = store
         self.categories = categories
         self.rules_path = rules_path
+        self.ensure_schema()
+
+    def ensure_schema(self):
+        store = self.store
         with store.lock:
             store.db.executescript(SCHEMA)
             cols = {r[1] for r in store.db.execute("PRAGMA table_info(reviews)")}

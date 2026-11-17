@@ -31,7 +31,11 @@ class Store:
         self.lock = threading.Lock()
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
-        self.db.executescript(SCHEMA)
+        self.ensure_schema()
+
+    def ensure_schema(self):
+        with self.lock:
+            self.db.executescript(SCHEMA)
 
     def q(self, sql, args=()):
         with self.lock:
