@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS channels (
     mid INTEGER PRIMARY KEY, name TEXT, url TEXT, fans INTEGER,
     total_videos INTEGER, fetched_videos INTEGER, status TEXT, crawled_at TEXT
 );
+CREATE TABLE IF NOT EXISTS video_res (
+    bvid TEXT PRIMARY KEY, res INTEGER, checked_at TEXT
+);
 """
 
 
@@ -67,6 +70,12 @@ class Store:
             self.db.execute("""INSERT INTO channels (mid, name, url, status) VALUES (?,?,?, '未展开')
                                ON CONFLICT(mid) DO UPDATE SET name=COALESCE(NULLIF(excluded.name,''), name)""",
                             (mid, name, f"https://space.bilibili.com/{mid}"))
+            self.db.commit()
+
+    def save_res(self, bvid, res):
+        """记下抽查到的视频清晰度（短边像素，查不到是 NULL，也记下免得反复查）"""
+        with self.lock:
+            self.db.execute("INSERT OR REPLACE INTO video_res VALUES (?,?,?)", (bvid, res, now()))
             self.db.commit()
 
     def update_channel(self, mid, **fields):

@@ -239,3 +239,14 @@ class BiliClient:
             return d.get("follower")
         except BiliError:
             return None
+
+    def video_res(self, bvid):
+        """视频清晰度：上传画面的短边像素（1280×720 和竖屏 720×1280 都算 720）。查不到返回 None"""
+        try:
+            d = self._get("https://api.bilibili.com/x/player/pagelist", {"bvid": bvid}, wbi=False, retries=2)
+        except BiliError as e:
+            if str(e) == "已停止":
+                raise
+            return None
+        dim = (d[0].get("dimension") or {}) if isinstance(d, list) and d else {}
+        return min(dim.get("width") or 0, dim.get("height") or 0) or None

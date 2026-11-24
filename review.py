@@ -31,7 +31,9 @@ import userdata
 SUFFIXES = ["评测", "测评", "开箱", "教程", "好物", "推荐", "科普", "设备", "产品", "技术", "开发"]
 
 NUMBER_FIELDS = {"fans": "粉丝数", "total_videos": "视频总数", "days_since_update": "停更天数",
-                 "avg_play": "平均播放量"}
+                 "avg_play": "平均播放量", "low_res": "低于720P的视频占比(%)"}
+RES_MIN = 720     # 清晰度：画面短边低于 720 像素算低于 720P
+RES_SAMPLE = 10   # 每个频道抽查最新的几个视频的清晰度
 RULE_TYPES = ("title_ratio", "name_contains", "number")
 
 DEFAULT_RULES = {
@@ -275,6 +277,41 @@ class Reviewer:
                   if c["enabled"] and c["type"] in ("title_ratio", "name_contains")}
         return related, Matcher(dom_words), Matcher(pick([r["jianbao_list"]])), custom
 
+    # ---------- 清晰度抽查 ----------
+    # 频道视频列表里没有清晰度，要一个个视频去查，所以只抽查最新的 RES_SAMPLE 个，
+    # 而且只有启用了「低于720P的视频占比」规则、频道又在规则的类别里时才查。
+    def _res_scopes(self):
+        return {c["scope"] for c in self.rules()["custom_rules"]
+                if c["enabled"] and c["type"] == "number" and c["field"] == "low_res"}
+
+    def _tops_of(self, mid):
+        return {r["c"].split(" > ")[0] for r in self.store.q(
+            "SELECT DISTINCT h.category c FROM hits h JOIN videos v ON v.bvid = h.bvid WHERE v.mid = ?", (mid,))}
+
+    def res_pending(self, mid):
+        """这个频道还要查清晰度的视频（最新 RES_SAMPLE 个里没查过的）；不需要查时返回空"""
+        scopes = self._res_scopes()
+        if not scopes or ("" not in scopes and not scopes & self._tops_of(mid)):
+            return []
+        return [r["bvid"] for r in self.store.q(
+            """SELECT v.bvid, r.bvid checked FROM videos v LEFT JOIN video_res r ON r.bvid = v.bvid
+               WHERE v.mid = ? ORDER BY v.pubdate DESC LIMIT ?""", (mid, RES_SAMPLE)) if not r["checked"]]
+
+    def res_todo(self):
+        """已抓全、还没有结论、但清晰度没查完的频道"""
+        if not self._res_scopes():
+            return []
+        rows = self.store.q(f"""SELECT c.mid, c.name FROM channels c LEFT JOIN reviews r ON r.mid = c.mid
+                               WHERE c.status = '{DONE}' AND r.manual_decision IS NULL
+                                 AND COALESCE(r.auto_decision, '') != '淘汰'""")
+        return [(r["mid"], r["name"]) for r in rows if self.res_pending(r["mid"])]
+
+    def _low_res(self):
+        """每个频道抽查过的视频里，低于 720P 的占比（%）"""
+        return {r["mid"]: round(100 * r["low"] / r["n"], 1) for r in self.store.q(
+            f"""SELECT v.mid, SUM(r.res < {RES_MIN}) low, COUNT(r.res) n
+                FROM video_res r JOIN videos v ON v.bvid = r.bvid GROUP BY v.mid""") if r["n"]}
+
     # ---------- 自动判断 ----------
     def _channel_cats(self):
         """每个频道搜索命中的类别路径计数"""
@@ -320,6 +357,7 @@ class Reviewer:
         for v in self.store.q("SELECT mid, title, pubdate, play FROM videos"):
             vids[v["mid"]].append(v)
         today = datetime.date.today()
+        low_res = self._low_res()
         rows = []
         for c in self.store.q("SELECT * FROM channels WHERE status = ?", (DONE,)):
             mid = c["mid"]
@@ -357,7 +395,9 @@ class Reviewer:
                 "fans": c["fans"], "total_videos": c["total_videos"],
                 "days_since_update": (today - datetime.date.fromisoformat(max(dates))).days if dates else None,
                 "avg_play": round(sum(v["play"] or 0 for v in vs) / n) if n else None,
+                "low_res": low_res.get(mid),
             }
+            waiting = []
             for cr in r["custom_rules"]:
                 if not cr["enabled"] or (cr["scope"] and cr["scope"] not in tops):
                     continue
@@ -374,17 +414,23 @@ class Reviewer:
                         reasons.append(f"{cr['label']}（频道名含「{w}」）")
                 else:
                     v = numbers.get(cr["field"])
+                    if v is None and cr["field"] == "low_res":
+                        waiting.append("还没查清晰度（下次采集时会抽查）")
+                        continue
                     # 停更天数、平均播放量是从已抓到的视频算的，频道没展开时不准，先不判断
                     if v is None or (cr["field"] in ("days_since_update", "avg_play") and not enough):
                         continue
-                    stats[cr["label"]] = v
+                    shown = f"{v}%" if cr["field"] == "low_res" else v
+                    stats[cr["label"]] = shown
                     if self._cmp(v, cr["op"], cr["value"]):
-                        reasons.append(f"{cr['label']}（{NUMBER_FIELDS[cr['field']]} {v}）")
+                        reasons.append(f"{cr['label']}（{NUMBER_FIELDS[cr['field']].replace('(%)', '')} {shown}）")
 
             if reasons:
                 decision, reason = "淘汰", "；".join(reasons)
             elif not enough:
                 decision, reason = "待定", f"只抓到 {n} 个视频"
+            elif waiting:
+                decision, reason = "待定", waiting[0]
             else:
                 decision, reason = "通过", ""
             rows.append((mid, top, main, n, unrelated, dom, jb, decision, reason,

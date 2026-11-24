@@ -10,6 +10,7 @@ import threading
 import time
 
 from bili import BiliClient, BiliError
+from review import RES_MIN
 
 DEFAULT_RUN_MIN = 10  # 限时采集每次默认 10 分钟
 MAX_CHANNEL_VIDEOS = 5000  # 视频太多的频道只取最新的 5000 个，取到就算抓全
@@ -300,6 +301,26 @@ class Job:
                                 WHERE ({conds}) AND c.status IS NOT '已完成' GROUP BY v.mid""", args)
         return {r["mid"]: (r["n"], r["name"]) for r in rows}
 
+    def _check_res(self, client, mid, tag):
+        """抽查频道最新几个视频的清晰度（只在筛选规则要求时）"""
+        bvids = self.reviewer.res_pending(mid) if self.reviewer else []
+        if not bvids:
+            return
+        self.log(f"{tag} 抽查最新 {len(bvids)} 个视频的清晰度…")
+        got = []
+        for b in bvids:
+            if self.stop_flag.is_set():
+                return
+            try:
+                res = client.video_res(b)
+            except BiliError:
+                return
+            self.store.save_res(b, res)
+            got.append(res)
+        known = [r for r in got if r]
+        low = sum(r < RES_MIN for r in known)
+        self.log(f"{tag} 清晰度：查到 {len(known)} 个，低于720P的 {low} 个")
+
     def _expand(self, client, found, names, paths, o):
         st = self.state
         cp = self.cp
@@ -394,9 +415,20 @@ class Job:
                                       fetched_videos=fetched, status=status)
             result[status] += 1
             if status == "已完成":
+                self._check_res(client, mid, tag)
                 total_ch, done_ch = self._channel_counts()
                 self.log(f"{tag} ✓ 抓全：粉丝 {fans if fans is not None else '?'}，视频 {fetched} 个"
                          f"｜本次已抓全 {result['已完成']}，还剩 {len(mids) - i} 个｜累计抓全 {done_ch}/{total_ch}")
+
+        # 以前抓全的频道，规则后来才要求查清晰度的，补查
+        todo = [] if self.stop_flag.is_set() or not self.reviewer else self.reviewer.res_todo()
+        if todo:
+            self.log(f"另有 {len(todo)} 个已抓全的频道还没查清晰度，补查一下")
+        for i, (mid, name) in enumerate(todo, 1):
+            if self.stop_flag.is_set():
+                break
+            st["progress"] = f"补查清晰度 {i}/{len(todo)}「{name}」"
+            self._check_res(client, mid, f"[补查 {i}/{len(todo)}]「{name}」")
 
         total_ch, done_ch = self._channel_counts()
         bad = {k: v for k, v in result.items() if k != "已完成"}

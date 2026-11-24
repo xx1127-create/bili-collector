@@ -131,7 +131,8 @@ def rule_summary(r):
         out.append(f"{r['jianbao_scope']}类鉴宝视频 ≤ {r['jianbao_max']}%")
     if r["fans_on"]:
         out.append(f"粉丝 ≤ {r['fans_max']}")
-    fields = {"fans": "粉丝数", "total_videos": "视频总数", "days_since_update": "停更天数", "avg_play": "平均播放量"}
+    fields = {"fans": "粉丝数", "total_videos": "视频总数", "days_since_update": "停更天数", "avg_play": "平均播放量",
+              "low_res": "低于720P的视频占比(%)"}
     for c in r["custom_rules"]:
         if not c["enabled"]:
             continue
